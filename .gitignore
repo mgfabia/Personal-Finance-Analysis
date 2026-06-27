@@ -1,0 +1,30 @@
+# macOS
+.DS_Store
+
+# Secrets / env (never commit — Plaid secret, JWT_SECRET, DATABASE_URL, encryption key)
+.env
+.env.*
+!.env.example
+
+# Python / FastAPI (backend)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Next.js (frontend)
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local database dumps / backups
+*.dump
+*.sql.gz
