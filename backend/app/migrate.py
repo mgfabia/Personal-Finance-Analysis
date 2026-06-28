@@ -28,8 +28,11 @@ import psycopg
 
 from .config import get_settings
 
-# backend/app/migrate.py -> repo root -> db/migrations
-MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "db" / "migrations"
+# backend/app/migrate.py -> backend/ -> db/migrations. parents[1] (the backend
+# dir) is the anchor so this resolves both locally (backend/db/migrations) and in
+# the Railway container, where the build context is backend/ copied to /app
+# (/app/db/migrations).
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "db" / "migrations"
 
 CREATE_TRACKING_TABLE = """
 CREATE TABLE IF NOT EXISTS schema_migrations (

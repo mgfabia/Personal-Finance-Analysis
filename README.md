@@ -23,8 +23,8 @@ schema) is next.
 
 ```
 /backend     FastAPI service + migration runner (app/migrate.py)
+  /db        Plain .sql migrations, applied in order  (see backend/db/README.md)
 /frontend    Next.js (App Router) — thin skeleton for now
-/db          Plain .sql migrations, applied in order  (see db/README.md)
 /scripts     Ops: nightly pg_dump backup (backup.sh)
 ```
 

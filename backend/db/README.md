@@ -1,8 +1,9 @@
-# `/db` — database migrations
+# `backend/db` — database migrations
 
 Plain `.sql` files, applied **in lexical order** by the runner in
-[`backend/app/migrate.py`](../backend/app/migrate.py). This is the single
-mechanism every schema and view change rides on.
+[`app/migrate.py`](../app/migrate.py). This is the single mechanism every schema
+and view change rides on. They live under `backend/` (not a top-level `/db`) so
+they ship inside the backend service's Railway build context.
 
 ## Conventions
 
