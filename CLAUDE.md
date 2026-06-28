@@ -4,13 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-**Phase 0 (Foundations) scaffolding is in place.** The monorepo skeleton
-(`/backend` incl. `db/` migrations, `/frontend`, `/scripts`), the plain-SQL migration runner,
-env-driven secrets, FastAPI health checks, the Next.js skeleton, and the nightly
-backup script all exist. The remaining Phase 0 exit criteria are **manual,
-infra-side** (provision Railway Postgres, set secrets, run the baseline
-migration) — listed under "Finishing Phase 0" in `README.md`. **Phase 1** (the
-real identity/provenance schema in `0001_initial_schema.sql`) is next.
+**Phase 0 (Foundations) — complete and deployed.** The backend is live on
+Railway (Railpack build) with a self-hosted Postgres on the private network;
+`/health` and `/health/db` are green; the migration runner applied
+`0000_baseline` via the pre-deploy step. Migrations live in `backend/db` and
+auto-apply on every deploy. All Phase 0 exit criteria are met.
+
+Outstanding Phase 0 follow-ups (none block Phase 1):
+- Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
+  `UPLOAD_CMD`) — wire before real data lands.
+- `JWT_SECRET` / `ACCESS_TOKEN_ENC_KEY` not yet set as Railway vars (config reads
+  them; needed Phases 7 / 2).
+- Plaid Sandbox `PLAID_CLIENT_ID` / `PLAID_SECRET` not yet obtained/set (needed
+  from Phase 2).
+
+**Phase 1** (real identity/provenance schema in
+`backend/db/migrations/0001_initial_schema.sql`) is the active phase.
 
 Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
 skeleton → correctness phases 1–9).
