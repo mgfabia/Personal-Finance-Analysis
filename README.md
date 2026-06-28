@@ -12,12 +12,13 @@ system.
 
 ## Status
 
-**Phase 0 — Foundations (scaffolding in place).** Monorepo skeleton, migration
-runner, env-driven secrets, FastAPI health checks, Next.js skeleton, and the
-backup script all exist. The remaining Phase 0 exit criteria are **manual,
-infra-side** steps (provision Railway Postgres, set secrets, run the baseline
-migration) — see [Finishing Phase 0](#finishing-phase-0). Phase 1 (the real
-schema) is next.
+**Phase 0 — Foundations: complete and deployed.** The backend runs on Railway
+with a private-network Postgres; `/health` and `/health/db` are green; the
+migration runner applied `0000_baseline` via the pre-deploy step. All Phase 0
+exit criteria are met. Non-blocking follow-ups remain — schedule the nightly
+backup, and set `JWT_SECRET` / `ACCESS_TOKEN_ENC_KEY` / Plaid Sandbox keys when
+their phases arrive (see [Finishing Phase 0](#finishing-phase-0)). **Phase 1**
+(the real schema, `backend/db/migrations/0001_initial_schema.sql`) is next.
 
 ## Layout
 
