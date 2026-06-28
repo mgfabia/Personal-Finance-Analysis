@@ -4,15 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is a **pre-implementation** repository. There is no application code yet — only
-the architecture spec and a build roadmap. The first code to be written is Phase 0
-(monorepo skeleton + migration tooling), followed by the deliberately throwaway
-**Phase S "walking skeleton"** (a learning-first end-to-end slice) before the
-correctness phases — all defined in `BUILD-PLAN.md`.
+**Phase 0 (Foundations) scaffolding is in place.** The monorepo skeleton
+(`/backend`, `/frontend`, `/db`, `/scripts`), the plain-SQL migration runner,
+env-driven secrets, FastAPI health checks, the Next.js skeleton, and the nightly
+backup script all exist. The remaining Phase 0 exit criteria are **manual,
+infra-side** (provision Railway Postgres, set secrets, run the baseline
+migration) — listed under "Finishing Phase 0" in `README.md`. **Phase 1** (the
+real identity/provenance schema in `0001_initial_schema.sql`) is next.
 
-There are therefore **no build, lint, test, or run commands yet**. When you add the
-first toolchain (FastAPI backend, Next.js frontend, SQL migration runner), update
-this file with the real commands.
+Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
+skeleton → correctness phases 1–9).
+
+## Commands
+
+No local database — everything runs against the hosted Railway Postgres
+(`DATABASE_URL` from env or a git-ignored `.env`).
+
+**Backend** (from `/backend`):
+- Install: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
+- Migrate: `python -m app.migrate` (apply pending) / `python -m app.migrate --status`
+- Run: `uvicorn app.main:app --reload` → `GET /health`, `GET /health/db`
+
+**Frontend** (from `/frontend`): `npm install` then `npm run dev` (build: `npm run build`).
+
+**Backups:** `DATABASE_URL=... ./scripts/backup.sh` (set `UPLOAD_CMD` for off-Railway push).
+
+There are no test or lint commands yet; add them here when introduced.
 
 ## Source of truth
 
