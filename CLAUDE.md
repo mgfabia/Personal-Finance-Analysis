@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project status
 
 **Phase 0 (Foundations) scaffolding is in place.** The monorepo skeleton
-(`/backend`, `/frontend`, `/db`, `/scripts`), the plain-SQL migration runner,
+(`/backend` incl. `db/` migrations, `/frontend`, `/scripts`), the plain-SQL migration runner,
 env-driven secrets, FastAPI health checks, the Next.js skeleton, and the nightly
 backup script all exist. The remaining Phase 0 exit criteria are **manual,
 infra-side** (provision Railway Postgres, set secrets, run the baseline
@@ -70,8 +70,10 @@ dbt + Grafana system.
   sign-in (POST `/auth/login` → store JWT → `Authorization: Bearer` on calls).
   *Hosting target is still open — Vercel vs Railway; see spec §Remaining open
   decisions.*
-- **Repo layout:** monorepo — `/backend` (FastAPI), `/frontend` (Next.js),
-  `/db` (plain SQL migrations).
+- **Repo layout:** monorepo — `/backend` (FastAPI; plain SQL migrations live in
+  `backend/db`), `/frontend` (Next.js), `/scripts` (ops). *Migrations sit under
+  `backend/` (not a top-level `/db`) so they ship inside the backend service's
+  Railway build context — the backend's migration runner is their only consumer.*
 - **Dev environment:** hosted Plaid **Sandbox** + a hosted Railway Postgres (no
   local DB). Build everything in Sandbox; Production cutover is the last phase.
 

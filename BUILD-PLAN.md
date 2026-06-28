@@ -10,7 +10,7 @@ learning-first throwaway slice (Phase S) that isn't in the spec's order.
 
 - **Deliverable of this session:** this roadmap document only — no code yet.
 - **Frontend:** Next.js (React) — pairs with `react-plaid-link`; hand-rolled sign-in.
-- **Repo layout:** monorepo — `/backend` (FastAPI), `/frontend` (Next.js), `/db` (migrations).
+- **Repo layout:** monorepo — `/backend` (FastAPI; SQL migrations in `backend/db`), `/frontend` (Next.js).
 - **Dev environment:** hosted Plaid Sandbox + hosted Railway Postgres (no local DB).
 
 ---
@@ -81,15 +81,16 @@ purpose — its only job is to put the whole full-stack shape in your head early
 **Goal:** the project can hold code and secrets and version the database. Keep it
 thin — no business logic.
 
-- Monorepo skeleton: `/backend` (FastAPI), `/frontend` (Next.js), `/db` (SQL
-  migrations), shared `README`/tooling.
+- Monorepo skeleton: `/backend` (FastAPI; SQL migrations in `backend/db`),
+  `/frontend` (Next.js), `/scripts` (ops), shared `README`/tooling. *(Migrations
+  live under `backend/` so they ship in the backend's Railway build context.)*
 - Create the **Railway** project with two services: the FastAPI backend and a
   **self-hosted Postgres** container on the project's private network; obtain
   **Plaid Sandbox** client_id/secret.
 - Secret handling: Railway env vars in prod; local `.env` (git-ignored) for dev.
   Decide the `access_token` encryption key and the `JWT_SECRET` now (env-provided),
   even before they're used.
-- Migration runner against Railway Postgres (plain SQL files in `/db`, applied in
+- Migration runner against Railway Postgres (plain SQL files in `backend/db/migrations`, applied in
   order). This is the mechanism every later schema/view change rides on.
 - Wire the nightly `pg_dump` to off-Railway storage now — I own backups (finance app).
 
