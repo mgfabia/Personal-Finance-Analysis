@@ -31,23 +31,57 @@ their phases arrive (see [Finishing Phase 0](#finishing-phase-0)). **Phase 1**
 
 ## Local development
 
-No local database — dev runs against the hosted Railway Postgres (CLAUDE.md).
+**Each environment has its own database — never shared.** Local dev uses a
+disposable Postgres in Docker; deployed environments (staging, production) each
+get their own Railway Postgres. Plaid Sandbox is hit over the internet from all of
+them.
+
+### The two loops
+
+- **Inner loop (local, fast):** edit → `uvicorn --reload` restarts → hit
+  `http://localhost:8000/docs` (FastAPI's interactive API explorer) or `curl` →
+  inspect → repeat. No git, no deploy. This is where most work happens.
+- **Outer loop (deploy):** push only code that already works locally → Railway
+  builds → pre-deploy `migrate` → smoke-test the deployed URL. Git ships proven
+  code; it is not how you test.
 
 ### Backend
 
 ```bash
+# 1. Start a local, isolated Postgres (repo root)
+docker compose up -d
+
+# 2. Backend deps + env
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # then fill in DATABASE_URL + secrets
+cp .env.example .env            # DATABASE_URL already points at the local DB;
+                                # add Plaid Sandbox keys + generate secrets
 
+# 3. Apply migrations to the local DB, then run with hot reload
 python -m app.migrate           # apply pending migrations (idempotent)
 python -m app.migrate --status  # show applied vs pending
-uvicorn app.main:app --reload   # http://localhost:8000
+uvicorn app.main:app --reload   # http://localhost:8000  (docs at /docs)
+```
+
+Reset the local DB anytime (handy while iterating on the schema):
+
+```bash
+docker compose down -v && docker compose up -d   # wipe + fresh; re-run migrate
 ```
 
 Health checks: `GET /health` (process up) and `GET /health/db` (reaches
-Postgres).
+Postgres). Inspect the DB with `psql postgresql://pfa:pfa@localhost:5432/pfa` or
+any GUI (TablePlus, DBeaver, pgAdmin).
+
+### Deployed environment isolation (Railway)
+
+- Production is its own environment with a private Postgres.
+- Create a **staging** env: Railway → Environments → **New → Fork from
+  Production**. Railway clones the service definitions but **not** the data — each
+  env gets a fresh Postgres, and `${{Postgres.DATABASE_URL}}` re-resolves per env.
+- Optional: enable **Branch Deployments** for ephemeral per-PR environments (own
+  URL + own DB, auto-deleted on merge).
 
 ### Frontend
 

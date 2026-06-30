@@ -11,7 +11,10 @@ learning-first throwaway slice (Phase S) that isn't in the spec's order.
 - **Deliverable of this session:** this roadmap document only — no code yet.
 - **Frontend:** Next.js (React) — pairs with `react-plaid-link`; hand-rolled sign-in.
 - **Repo layout:** monorepo — `/backend` (FastAPI; SQL migrations in `backend/db`), `/frontend` (Next.js).
-- **Dev environment:** hosted Plaid Sandbox + hosted Railway Postgres (no local DB).
+- **Dev environment:** hosted Plaid Sandbox; local Postgres in Docker for the dev
+  inner loop; separate Railway environments (prod + staging), each with its own
+  Postgres. *(Supersedes the earlier "no local DB" note — per-environment DB
+  isolation.)*
 
 ---
 

@@ -26,8 +26,9 @@ skeleton → correctness phases 1–9).
 
 ## Commands
 
-No local database — everything runs against the hosted Railway Postgres
-(`DATABASE_URL` from env or a git-ignored `.env`).
+Local dev runs against a **local Postgres in Docker** (`docker compose up -d`),
+with `DATABASE_URL` in a git-ignored `backend/.env`. Deployed environments use
+their own Railway Postgres (`${{Postgres.DATABASE_URL}}`).
 
 **Backend** (from `/backend`):
 - Install: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
@@ -83,8 +84,15 @@ dbt + Grafana system.
   `backend/db`), `/frontend` (Next.js), `/scripts` (ops). *Migrations sit under
   `backend/` (not a top-level `/db`) so they ship inside the backend service's
   Railway build context — the backend's migration runner is their only consumer.*
-- **Dev environment:** hosted Plaid **Sandbox** + a hosted Railway Postgres (no
-  local DB). Build everything in Sandbox; Production cutover is the last phase.
+- **Dev environment:** hosted Plaid **Sandbox** for all phases; Production cutover
+  is the last phase. **DB isolation per environment (no shared Postgres):**
+  - *Local inner loop:* a local Postgres in Docker (repo-root `docker-compose.yml`)
+    with the app run on-host via `uvicorn --reload`.
+  - *Deployed:* separate Railway **environments** (`production` + a forked
+    `staging`/`dev`), each with its **own** Railway Postgres; production's DB stays
+    private (no public TCP proxy).
+  - *Supersedes the original "no local DB" decision* — changed deliberately for
+    per-environment DB isolation and fast local schema iteration.
 
 ## Non-negotiable invariants
 
