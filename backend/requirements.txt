@@ -1,7 +1,10 @@
-# Phase 0 — foundations only. Business deps (plaid, bcrypt, pyjwt, cryptography)
-# are added in the phases that first use them (2, 3, 7).
+# Business deps are added in the phases that first use them (bcrypt, pyjwt → 7).
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pydantic-settings==2.7.0
 psycopg[binary]==3.2.3
+
+# Phase 2 — Plaid Link flow + encrypted access_token at rest.
+plaid-python==40.1.0
+cryptography==49.0.0

@@ -35,6 +35,13 @@ class Settings(BaseSettings):
 
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
 
+    # The single app user's email. Until hand-rolled auth lands (Phase 7), this
+    # identifies the one `users` row that all data attaches to; Phase 7's login
+    # checks a password against that same row. Override per environment.
+    app_user_email: str = Field(
+        default="owner@localhost", validation_alias="APP_USER_EMAIL"
+    )
+
     # --- Secrets fixed now, used in later phases ----------------------------
     # HS256 session-JWT signing key (hand-rolled auth, Phase 7). Never in git.
     jwt_secret: str = Field(default="", validation_alias="JWT_SECRET")
