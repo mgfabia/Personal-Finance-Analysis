@@ -1,8 +1,7 @@
-"""FastAPI entrypoint — Phase 0 foundations.
+"""FastAPI entrypoint.
 
-Intentionally has no business logic: just enough to prove the service boots
-and can reach Railway Postgres over the private network. Link, sync, webhooks,
-auth, and read endpoints arrive in later phases.
+Phase 0 health checks plus the Phase 2 Plaid Link & item-storage routes. Sync,
+webhooks, auth, and read endpoints arrive in later phases.
 
 Run locally:  uvicorn app.main:app --reload  (from the backend/ directory)
 """
@@ -14,8 +13,11 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .db import ping
+from .plaid_routes import router as plaid_router
 
 app = FastAPI(title="Personal Finance API", version="0.0.0")
+
+app.include_router(plaid_router)
 
 
 @app.get("/health")
