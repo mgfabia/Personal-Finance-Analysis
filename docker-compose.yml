@@ -1,0 +1,31 @@
+# Local development ONLY. Railway cannot deploy a compose file — deploys are
+# per-service (Railpack backend + a Railway Postgres per environment). This just
+# gives the local inner loop a disposable, isolated Postgres so you never share a
+# database between environments and can wipe/reapply migrations freely:
+#
+#   docker compose up -d        # start local Postgres
+#   docker compose down         # stop (keeps data)
+#   docker compose down -v      # stop AND wipe the DB (fresh schema next `up`)
+#
+# Then run the app on your host with hot reload:
+#   cd backend && uvicorn app.main:app --reload
+services:
+  postgres:
+    # Match the major version to your Railway Postgres for parity.
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pfa
+      POSTGRES_PASSWORD: pfa
+      POSTGRES_DB: pfa
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pfa -d pfa"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
