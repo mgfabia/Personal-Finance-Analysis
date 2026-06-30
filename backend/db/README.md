@@ -32,4 +32,4 @@ Re-running with nothing pending is a clean no-op (exit 0).
 
 - `0000_baseline.sql` — empty; proves the runner (Phase 0).
 - `0001_initial_schema.sql` — raw + app tables, identity/provenance + item
-  health (Phase 1, not yet written).
+  health (Phase 1).

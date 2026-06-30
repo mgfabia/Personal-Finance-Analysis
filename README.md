@@ -12,13 +12,13 @@ system.
 
 ## Status
 
-**Phase 0 — Foundations: complete and deployed.** The backend runs on Railway
-with a private-network Postgres; `/health` and `/health/db` are green; the
-migration runner applied `0000_baseline` via the pre-deploy step. All Phase 0
-exit criteria are met. Non-blocking follow-ups remain — schedule the nightly
-backup, and set `JWT_SECRET` / `ACCESS_TOKEN_ENC_KEY` / Plaid Sandbox keys when
-their phases arrive (see [Finishing Phase 0](#finishing-phase-0)). **Phase 1**
-(the real schema, `backend/db/migrations/0001_initial_schema.sql`) is next.
+**Phase 1 — Data model: complete.** Phase 0 (Foundations) is live on Railway;
+the real identity/provenance schema (`backend/db/migrations/0001_initial_schema.sql`)
+is written and verified — all raw + app tables exist, `transactions` key to
+`accounts` (not items), and every data table carries `user_id`. **Phase 2**
+(Plaid Link flow + encrypted `access_token` + account reconciliation) is next;
+it needs Plaid Sandbox keys and an `ACCESS_TOKEN_ENC_KEY` set in env (see
+[Secrets](#secrets) and [Finishing Phase 0](#finishing-phase-0)).
 
 ## Layout
 
