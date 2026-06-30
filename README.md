@@ -18,12 +18,13 @@ identity/provenance schema) is migrated; Phase 2 (Plaid Link → encrypted
 transactional, idempotent transactions sync engine + cron entrypoint
 `python -m app.sync`), and Phase 4 (verified webhooks + item health —
 `POST /webhooks/plaid` triggers `run_sync`; `ITEM` webhooks/sync-failures
-maintain `items.status`) are built and verified against Plaid Sandbox. The
-genuine Plaid-signed webhook delivery validates on the staging deploy (needs the
-public URL). **Phase 5** (remaining products) is next. Outstanding infra: deploy
-+ activate on the Railway `staging` fork (`PLAID_*`, `ACCESS_TOKEN_ENC_KEY`,
-`PLAID_WEBHOOK_URL`), wire the nightly cron (`python -m app.sync`) and `pg_dump`
-backup (see [Secrets](#secrets) and [Finishing Phase 0](#finishing-phase-0)).
+maintain `items.status`). **All of this is deployed to Railway and validated
+end-to-end on production** against Plaid Sandbox — migration, health, the interim
+`X-API-Key` guard, link → encrypted storage, the nightly `sync-cron` service, and
+real Plaid-signed webhook verification (`POST /webhooks/plaid 200`). **Phase 5**
+(remaining products) is next. Outstanding infra: nightly `pg_dump` backup; a true
+forked `staging` env is deferred until Phase 9 (prod is Sandbox-backed). Real auth
+(`JWT_SECRET`, replacing the interim guard) is Phase 7.
 
 ## Layout
 

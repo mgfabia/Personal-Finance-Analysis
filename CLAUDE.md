@@ -45,18 +45,20 @@ matched against the raw body (constant-time), and `iat` freshness. `POST
 `SYNC_UPDATES_AVAILABLE` → background sync; `ITEM` webhooks → `items.status`
 (login_required / pending_expiration / revoked). Sync-failure safety net in
 `run_sync`: `ITEM_LOGIN_REQUIRED` mid-sync flips `status`, cursor untouched.
-Verified locally: 401 on unsigned/bogus, every branch, the safety net. The
-genuine Plaid-signed delivery round-trip validates on the staging deploy (needs
-the public URL); set `PLAID_WEBHOOK_URL` there.
+**Deployed to production and validated end-to-end** (2026-06-30) — Phases 0–4 are
+live on Railway against Plaid Sandbox. Confirmed on prod: migration applied,
+health green, the interim `X-API-Key` guard, link → encrypted storage, the cron
+syncing real transactions, and **real Plaid-signed webhooks passing verification**
+(many `POST /webhooks/plaid 200`). Deployment topology (backend / Postgres /
+sync-cron services, the private DB, the guard) is in the memory file
+`prod-deployment-topology.md`.
 
 Outstanding follow-ups (none block Phase 5):
-- **Deploy + activate** (this is the phase deploy becomes worthwhile): on the
-  Railway `staging` fork set `PLAID_*` / `ACCESS_TOKEN_ENC_KEY` /
-  `PLAID_WEBHOOK_URL`, then validate a real webhook via
-  `/sandbox/item/fire_webhook`. `main` is merged but unpushed (held until now).
-- **Railway cron** not yet wired — schedule `python -m app.sync` nightly
-  (durability backbone; until then sync is local-only).
-- Nightly `pg_dump` backup not yet scheduled. `JWT_SECRET` deferred to Phase 7.
+- Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
+  `UPLOAD_CMD`).
+- `JWT_SECRET` deferred to Phase 7 (replaces the interim `X-API-Key` guard).
+- A true forked `staging` env is deferred until there's real data to protect
+  (closer to Phase 9); today prod is Sandbox-backed.
 
 **Phase 5** (Remaining products — balances, recurring, investments, liabilities,
 the same lock-and-upsert shape under the proven engine) is the active phase.
