@@ -14,10 +14,12 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .db import ping
 from .plaid_routes import router as plaid_router
+from .webhook_routes import router as webhook_router
 
 app = FastAPI(title="Personal Finance API", version="0.0.0")
 
 app.include_router(plaid_router)
+app.include_router(webhook_router)
 
 
 @app.get("/health")

@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     plaid_secret: str = Field(default="", validation_alias="PLAID_SECRET")
     plaid_env: str = Field(default="sandbox", validation_alias="PLAID_ENV")
 
+    # Public HTTPS URL Plaid POSTs webhooks to (the deployed `/webhooks/plaid`).
+    # Passed into link tokens so new items report here. Empty in local dev (no
+    # public URL); set to the Railway URL in deployed envs (Phase 4).
+    plaid_webhook_url: str = Field(default="", validation_alias="PLAID_WEBHOOK_URL")
+
     def require_database_url(self) -> str:
         """Fail loudly when a DB operation is attempted without a URL."""
         if not self.database_url:

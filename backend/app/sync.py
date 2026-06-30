@@ -51,6 +51,18 @@ def _raw(obj: Any) -> Json:
     return Json(obj, dumps=lambda o: json.dumps(o, default=str))
 
 
+def _plaid_error_detail(exc: plaid.ApiException) -> dict[str, Any]:
+    """Parse a Plaid ApiException body into {error_code, error_message}."""
+    try:
+        body = json.loads(exc.body)
+        return {
+            "error_code": body.get("error_code"),
+            "error_message": body.get("error_message"),
+        }
+    except (ValueError, TypeError, AttributeError):
+        return {"error_code": None, "error_message": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Plaid pagination
 # ---------------------------------------------------------------------------
@@ -163,9 +175,24 @@ def run_sync(item: dict[str, Any]) -> dict[str, Any]:
             client = get_plaid_client()
 
             # --- Plaid I/O: no DB transaction open during the HTTP loop (§1) ---
-            added, modified, removed, next_cursor = _drain(
-                client, access_token, item["transactions_cursor"]
-            )
+            try:
+                added, modified, removed, next_cursor = _drain(
+                    client, access_token, item["transactions_cursor"]
+                )
+            except plaid.ApiException as exc:
+                detail = _plaid_error_detail(exc)
+                # Sync-failure safety net (§Item health): a sync that hits
+                # ITEM_LOGIN_REQUIRED flips status and stops — the backstop for a
+                # missed ITEM webhook. Cursor untouched, so nothing is skipped.
+                if detail.get("error_code") == "ITEM_LOGIN_REQUIRED":
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE items SET status = 'login_required', "
+                            "last_error = %s WHERE id = %s",
+                            (_raw(detail), item["id"]),
+                        )
+                    return {"item": plaid_item_id, "status": "login_required"}
+                raise
 
             # Resolve each txn's account. Accounts were reconciled at link, but a
             # brand-new account could appear between link and sync — lazily
@@ -219,18 +246,26 @@ def run_sync(item: dict[str, Any]) -> dict[str, Any]:
         conn.close()
 
 
+def fetch_item(plaid_item_id: str) -> dict[str, Any] | None:
+    """Load a live item row by Plaid item id (for webhook-triggered syncs)."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items "
+                "WHERE plaid_item_id = %s AND retired_at IS NULL",
+                (plaid_item_id,),
+            )
+            row = cur.fetchone()
+    return dict(zip(_ITEM_COLUMNS, row)) if row else None
+
+
 def _record_error(item: dict[str, Any], exc: Exception) -> None:
     """Persist a sync failure to items.last_error (cursor stays put → reprocess)."""
-    detail: dict[str, Any] = {"message": str(exc)}
-    if isinstance(exc, plaid.ApiException):
-        try:
-            body = json.loads(exc.body)
-            detail = {
-                "error_code": body.get("error_code"),
-                "error_message": body.get("error_message"),
-            }
-        except (ValueError, TypeError, AttributeError):
-            pass
+    detail: dict[str, Any] = (
+        _plaid_error_detail(exc)
+        if isinstance(exc, plaid.ApiException)
+        else {"error_code": None, "error_message": str(exc)}
+    )
     with connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
