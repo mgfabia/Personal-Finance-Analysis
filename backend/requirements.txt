@@ -11,3 +11,6 @@ cryptography==49.0.0
 
 # Phase 4 — verify Plaid webhook JWTs (ES256). Reused for HS256 session JWTs (7).
 pyjwt==2.13.0
+
+# Phase 7 — hand-rolled auth: bcrypt password hashing (login + set-password CLI).
+bcrypt==4.2.1

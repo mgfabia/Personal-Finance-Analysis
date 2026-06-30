@@ -35,6 +35,17 @@ class Settings(BaseSettings):
 
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
 
+    # Browser origins allowed to call the API (CORS). The frontend is a separate
+    # origin (its own Railway service in prod, localhost:3000 in dev), so the
+    # browser preflights cross-origin calls. Comma-separated; defaults to the dev
+    # frontend. In prod set CORS_ALLOW_ORIGINS to the deployed frontend URL.
+    cors_allow_origins: str = Field(
+        default="http://localhost:3000", validation_alias="CORS_ALLOW_ORIGINS"
+    )
+
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+
     # The single app user's email. Until hand-rolled auth lands (Phase 7), this
     # identifies the one `users` row that all data attaches to; Phase 7's login
     # checks a password against that same row. Override per environment.
@@ -51,10 +62,6 @@ class Settings(BaseSettings):
     access_token_enc_key: str = Field(
         default="", validation_alias="ACCESS_TOKEN_ENC_KEY"
     )
-
-    # Interim shared secret guarding the Plaid write endpoints until Phase 7 auth.
-    # Required in deployed environments; left empty in local dev. See app/security.py.
-    api_shared_secret: str = Field(default="", validation_alias="API_SHARED_SECRET")
 
     # --- Plaid (Sandbox in dev; used from Phase 2) --------------------------
     plaid_client_id: str = Field(default="", validation_alias="PLAID_CLIENT_ID")

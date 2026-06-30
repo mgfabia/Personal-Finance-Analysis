@@ -9,9 +9,10 @@ goes over the Railway private network via DATABASE_URL.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Any, Iterator
 
 import psycopg
+from psycopg.rows import dict_row
 
 from .config import get_settings
 
@@ -37,3 +38,20 @@ def ping() -> bool:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             return cur.fetchone() == (1,)
+
+
+def fetch_all(sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    """Run a read-only query and return rows as dicts (for JSON read endpoints).
+
+    A fresh short-lived connection per call — same posture as connect(); a pool
+    arrives if/when read traffic warrants it. The dict_row factory makes columns
+    addressable by name so view shapes map straight to JSON.
+    """
+    with psycopg.connect(settings_url(), row_factory=dict_row) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+def settings_url() -> str:
+    return get_settings().require_database_url()
