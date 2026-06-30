@@ -10,24 +10,43 @@ Railway (Railpack build) with a self-hosted Postgres on the private network;
 `0000_baseline` via the pre-deploy step. Migrations live in `backend/db` and
 auto-apply on every deploy. All Phase 0 exit criteria are met.
 
-**Phase 1 (Data model) — complete.** The real identity/provenance schema is in
-`backend/db/migrations/0001_initial_schema.sql` and applies cleanly (verified
-against the local Docker Postgres; re-run is a clean no-op). All raw + app
-tables exist; FKs encode "account = identity, item = provenance" (`transactions`
-key to `accounts`, no `item_id`; `accounts.current_item_id` → `items`;
+**Phase 1 (Data model) — complete.** Identity/provenance schema in
+`backend/db/migrations/0001_initial_schema.sql` (applies clean, re-run is a
+no-op). FKs encode "account = identity, item = provenance" (`transactions` key
+to `accounts`, no `item_id`; `accounts.current_item_id` → `items`;
 `persistent_account_id` partial-unique anchor); every data table carries
 `user_id` → `users.id`.
 
-Outstanding follow-ups (now blocking from Phase 2):
+**Phase 2 (Link flow & item storage) — complete.** `POST /link/token/create`
+and `POST /item/public_token/exchange` (`app/plaid_routes.py`); the
+`access_token` is Fernet-encrypted at rest (`app/crypto.py`) and never returned;
+exchange runs account reconciliation (`app/reconcile.py`, §3 — match on
+`persistent_account_id` → `plaid_account_id` → `(mask,type,subtype,name)`,
+re-point `current_item_id`). The single user is bootstrapped via
+`app/users.py`'s `current_user_id()` — the seam `require_auth` replaces in
+Phase 7. Verified end-to-end against Plaid Sandbox.
+
+**Phase 3 (Transactions sync engine) — complete.** `app/sync.py`: `run_sync`
+takes `pg_try_advisory_lock(hashtext(plaid_item_id))` (§1) before any Plaid I/O,
+drains `/transactions/sync`, then in one transaction upserts added+modified →
+tombstones removed (`removed_at`) → writes `transactions_cursor` **strictly
+last** (§2). Idempotent; failure mode is reprocess-never-skip. The nightly cron
+entrypoint is `python -m app.sync` (`sync_all_items`). All §1/§2 properties
+verified (lock-skip, atomic rollback with cursor un-advanced, tombstone
+round-trip).
+
+Outstanding follow-ups (none block Phase 4):
+- **Railway cron** not yet wired — schedule `python -m app.sync` nightly against
+  the deployed service (durability backbone; until then sync is local-only).
 - Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
   `UPLOAD_CMD`) — wire before real data lands.
-- `ACCESS_TOKEN_ENC_KEY` (Fernet) needed in env to encrypt `access_token`s —
-  **required for Phase 2**. `JWT_SECRET` still deferred to Phase 7.
-- Plaid Sandbox `PLAID_CLIENT_ID` / `PLAID_SECRET` — **required for Phase 2**.
+- Deployed envs: set `ACCESS_TOKEN_ENC_KEY` / `PLAID_CLIENT_ID` / `PLAID_SECRET`
+  as Railway vars (already in local `.env`). `JWT_SECRET` still deferred to
+  Phase 7.
 
-**Phase 2** (Link flow & item storage —
-`POST /link/token/create`, `POST /item/public_token/exchange`, encrypted
-`access_token`, account reconciliation) is the active phase.
+**Phase 4** (Webhooks & item health — verified Plaid webhooks trigger the same
+`run_sync`; `ITEM` webhooks and sync-failures maintain `items.status`) is the
+active phase.
 
 Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
 skeleton → correctness phases 1–9).
@@ -42,6 +61,9 @@ their own Railway Postgres (`${{Postgres.DATABASE_URL}}`).
 - Install: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
 - Migrate: `python -m app.migrate` (apply pending) / `python -m app.migrate --status`
 - Run: `uvicorn app.main:app --reload` → `GET /health`, `GET /health/db`
+- Sync (cron entrypoint): `python -m app.sync` — runs `run_sync` over every live
+  item (advisory-locked, transactional, idempotent). This is what the Railway
+  nightly cron invokes.
 
 **Frontend** (from `/frontend`): `npm install` then `npm run dev` (build: `npm run build`).
 

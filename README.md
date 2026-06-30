@@ -12,12 +12,14 @@ system.
 
 ## Status
 
-**Phase 1 — Data model: complete.** Phase 0 (Foundations) is live on Railway;
-the real identity/provenance schema (`backend/db/migrations/0001_initial_schema.sql`)
-is written and verified — all raw + app tables exist, `transactions` key to
-`accounts` (not items), and every data table carries `user_id`. **Phase 2**
-(Plaid Link flow + encrypted `access_token` + account reconciliation) is next;
-it needs Plaid Sandbox keys and an `ACCESS_TOKEN_ENC_KEY` set in env (see
+**Phases 0–3 complete.** Phase 0 (Foundations) is live on Railway. Phase 1 (the
+identity/provenance schema) is migrated. Phase 2 (Plaid Link → encrypted
+`access_token` → account reconciliation) and Phase 3 (the transactions sync
+engine — advisory-locked, transactional, idempotent `run_sync`, cron entrypoint
+`python -m app.sync`) are built and verified end-to-end against Plaid Sandbox.
+**Phase 4** (webhooks + item health) is next. Outstanding infra: wire the
+Railway nightly cron (`python -m app.sync`) and the `pg_dump` backup; set the
+Plaid / encryption keys as Railway vars in deployed envs (see
 [Secrets](#secrets) and [Finishing Phase 0](#finishing-phase-0)).
 
 ## Layout
