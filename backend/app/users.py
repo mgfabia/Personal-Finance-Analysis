@@ -1,16 +1,15 @@
-"""The single app user — Phase 2 stand-in for hand-rolled auth (Phase 7).
+"""The single app user — bootstrap of the one ``users`` row (invariant 6).
 
-There is no login yet, but every data row needs a ``user_id`` (invariant 6). So
-we ensure exactly one ``users`` row exists (keyed by ``APP_USER_EMAIL``) and hand
-its id to the write endpoints.
+Every data row needs a ``user_id``, so we ensure exactly one ``users`` row exists
+(keyed by ``APP_USER_EMAIL``). The bootstrap stores a deliberately *unusable*
+``password_hash`` placeholder — not a real hash, so it can never match any
+password. ``app.set_password`` (Phase 7a) overwrites it with a genuine bcrypt
+hash on that same row, preserving the id and all attached data.
 
-``current_user_id`` is the seam: it is a FastAPI dependency today that returns the
-single user's id, and in Phase 7 its body is replaced by JWT verification
-(``require_auth``) without the call sites changing.
-
-The bootstrap stores a deliberately *unusable* ``password_hash`` placeholder —
-not a real hash, so it can never match any password. Phase 7's "set password"
-step overwrites it with a genuine bcrypt hash.
+The request-time seam that once lived here (``current_user_id``) is gone: Phase 7a
+replaced it with real session-JWT verification in ``app.auth.require_auth``, which
+every data/write route now depends on. This module is only the bootstrap now —
+used by the set-password CLI and the Phase 2 link flow's account attachment.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from __future__ import annotations
 import psycopg
 
 from .config import get_settings
-from .db import connect
 
 # Not a valid bcrypt hash ($2b$...): bcrypt verification can never match it, so
 # the bootstrapped account is unusable for login until Phase 7 sets a real hash.
@@ -40,14 +38,3 @@ def get_or_create_default_user(conn: psycopg.Connection) -> str:
         cur.execute("SELECT id FROM users WHERE email = %s", (email,))
         row = cur.fetchone()
     return str(row[0])
-
-
-def current_user_id() -> str:
-    """FastAPI dependency: the authenticated user's id.
-
-    Phase 2 stand-in — resolves the single bootstrapped user. Phase 7 swaps this
-    body for session-JWT verification; the dependency signature stays the same so
-    every route that depends on it is unaffected.
-    """
-    with connect() as conn:
-        return get_or_create_default_user(conn)

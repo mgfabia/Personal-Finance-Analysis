@@ -21,10 +21,14 @@ to `accounts`, no `item_id`; `accounts.current_item_id` → `items`;
 and `POST /item/public_token/exchange` (`app/plaid_routes.py`); the
 `access_token` is Fernet-encrypted at rest (`app/crypto.py`) and never returned;
 exchange runs account reconciliation (`app/reconcile.py`, §3 — match on
-`persistent_account_id` → `plaid_account_id` → `(mask,type,subtype,name)`,
-re-point `current_item_id`). The single user is bootstrapped via
-`app/users.py`'s `current_user_id()` — the seam `require_auth` replaces in
-Phase 7. Verified end-to-end against Plaid Sandbox.
+`persistent_account_id` → `plaid_account_id` → `(mask,type,subtype,name)`
+**scoped to the same `plaid_institution_id`**, re-point `current_item_id`). The
+institution scope on the fingerprint fallback is load-bearing: without it,
+different banks with lookalike accounts merge (every Plaid Sandbox bank returns
+the same canonical account set with null persistent ids) — fixed in `2bd795f`.
+The single user is bootstrapped via `app/users.py`'s `get_or_create_default_user`;
+the request-time seam is now `require_auth` (Phase 7a). Verified end-to-end
+against Plaid Sandbox.
 
 **Phase 3 (Transactions sync engine) — complete.** `app/sync.py`: `run_sync`
 takes `pg_try_advisory_lock(hashtext(plaid_item_id))` (§1) before any Plaid I/O,
@@ -56,10 +60,14 @@ sync-cron services, the private DB, the guard) is in the memory file
 Outstanding follow-ups (none block the active phase):
 - Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
   `UPLOAD_CMD`).
-- `JWT_SECRET` lands with auth (Phase 7a, the now-active phase) — it replaces the
-  interim `X-API-Key` guard.
 - A true forked `staging` env is deferred until there's real data to protect
   (closer to Phase 9); today prod is Sandbox-backed.
+- **Prod deploy steps for 7a/8 (pending):** set `JWT_SECRET` (Railway env var) and
+  run `python -m app.set_password` once against the prod DB to replace the unusable
+  bootstrap hash; the interim `X-API-Key` guard / `API_SHARED_SECRET` env var is now
+  dead and can be removed from Railway. For the frontend: add a Next.js service to
+  the Railway project, set `NEXT_PUBLIC_API_URL` to the backend URL and the backend's
+  `CORS_ALLOW_ORIGINS` to the deployed frontend URL.
 
 **Build order reprioritized (2026-06-30):** auth and the frontend are pulled ahead
 of Phase 5, which moves to last among the feature work. See the *Revision —
@@ -67,14 +75,60 @@ build-order reprioritization* section in `BUILD-PLAN.md` for the full rationale 
 the revised sequence: **7a → 8 core → 5 → 7b → 6 → 9** (phase *numbers* unchanged as
 stable IDs; only the build order changed).
 
-**Phase 7a (Hand-rolled auth + transaction read API/views) is the active phase.**
-Build `POST /auth/login` (bcrypt-check → HS256 session JWT) + a `require_auth`
-dependency (pin `algorithms=["HS256"]`), gate every data/write route with it —
-this retires the interim `X-API-Key` guard — and serve the transaction/monthly/
-category views through auth-gated read endpoints. The net-worth view (Phase 7b) is
-deferred until Phase 5 lands its inputs. **Phase 5** (Remaining products —
-balances, recurring, investments, liabilities; the same lock-and-upsert shape under
-the proven engine) is now scheduled after the frontend core.
+**Phase 7a (Hand-rolled auth + transaction read API) — complete (code; verified
+locally).** `app/auth.py`: bcrypt `hash_password`/`verify_password`,
+`create_session_token` (HS256, `sub`=user_id, 12h `exp`), and the `require_auth`
+dependency (pins `algorithms=["HS256"]`, inv. 8) that **replaced the
+`current_user_id` seam**. `POST /auth/login` (`app/auth_routes.py`) returns an
+identical 401 for unknown-email and wrong-password and runs bcrypt in both branches
+(decoy hash) — no enumeration/timing leak. `python -m app.set_password` writes a real
+bcrypt hash onto the existing `APP_USER_EMAIL` row in place (preserves the user_id +
+attached data). The two Plaid write endpoints now `Depends(require_auth)`; the
+interim `X-API-Key` guard (`app/security.py`) is deleted. Read API
+(`app/read_routes.py`, all `require_auth`-gated, `WHERE user_id` from the token):
+`GET /api/transactions` (paginated, account/date filters), `/api/summary/monthly`,
+`/api/summary/category`, served from views in
+`backend/db/migrations/0002_read_views.sql` (`v_transactions` with overrides
+LEFT JOIN'd + `removed_at` filtered; monthly/category rollups). Verified end-to-end
+against synced Sandbox data: login happy-path, identical-401 failure modes, forged
+(wrong-secret) and expired tokens both rejected, write endpoints 401 without a token.
+The net-worth view (Phase 7b) stays deferred until Phase 5 lands its inputs.
+
+**Phase 8 (frontend core) — complete (code; verified locally).** Next.js 15.5
+(App Router, React 19, TS strict) in `/frontend`, hosted on **Railway** (same
+project — decided 2026-06-30; not Vercel, to stay single-vendor for a thin
+auth'd SPA that needs no SSR/edge). Built on **Tremor** via its current copy-in
+model (NOT the deprecated React-18-pinned `@tremor/react` package): **Tailwind
+CSS v4** + `tailwind-variants`/`clsx`/`tailwind-merge`, `@remixicon/react` icons,
+Geist font, and **Recharts** for charts — set up per Tremor's official Next.js
+guide (`lib/utils.ts` `cx`/focus constants and the `globals.css` `@theme` are
+verbatim from it). Tremor-style components are hand-copied into `app/components/`
+(no CLI exists): `ui/Card`, `ui/Button`, `KpiCard`, `BarList`, `AccountSelect`,
+`charts/CategoryDonut` (donut) + `charts/TrendArea` (area), `TransactionsTable`,
+`LinkButton`. Client-rendered (auth is a localStorage JWT, no SSR access).
+`app/lib/api.ts` is the single API channel: `login` stores the JWT, `apiFetch`
+attaches `Authorization: Bearer` and bounces to `/login` on 401
+(`UnauthorizedError`). Pages: `/login` (hand-rolled sign-in, generic error to
+match the backend's identical 401) and `/` (dashboard — auth guard; parallel load
+of transactions + monthly summary + **category summary** + accounts). Dashboard
+shows KPI tiles (income/spending/net), an income-vs-spending area chart, a
+spending-by-category donut + top-categories BarList, and the transactions table
+with an **account filter** (re-fetches via `/api/transactions?account_id=`).
+Added read endpoint `GET /api/accounts` and `getCategorySummary`. `components/
+LinkButton` drives the Phase 2 add-a-bank flow via `react-plaid-link` (browser
+never sees the secret/access_token, inv. 1). Backend gained `CORSMiddleware`
+(`CORS_ALLOW_ORIGINS`, default `localhost:3000`). Verified locally: `npm run
+build` clean (types valid), CORS preflight allows the FE origin and rejects
+others, and the full cross-origin login → bearer → all four read endpoints
+returns real synced Sandbox data (2 banks, 24 accounts, 96 txns).
+**Not yet done** (deferred by dependency): the **reconnect banner** (needs Phase 6
+re-auth backend) and any balances/investments/net-worth UI (needs Phase 5 / 7b).
+Known data-semantics note: `v_*_summary` count every outflow as "spending", so
+`TRANSFER_OUT`/`LOAN_PAYMENTS` dominate the category charts — a future view
+refinement, not a bug.
+
+**Next: Phase 5** (Remaining products — balances, recurring, investments,
+liabilities; the same lock-and-upsert shape under the proven engine).
 
 Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
 skeleton → correctness phases 1–9), as amended by the 2026-06-30 reprioritization
