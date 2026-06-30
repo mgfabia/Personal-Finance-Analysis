@@ -10,16 +10,24 @@ Railway (Railpack build) with a self-hosted Postgres on the private network;
 `0000_baseline` via the pre-deploy step. Migrations live in `backend/db` and
 auto-apply on every deploy. All Phase 0 exit criteria are met.
 
-Outstanding Phase 0 follow-ups (none block Phase 1):
+**Phase 1 (Data model) — complete.** The real identity/provenance schema is in
+`backend/db/migrations/0001_initial_schema.sql` and applies cleanly (verified
+against the local Docker Postgres; re-run is a clean no-op). All raw + app
+tables exist; FKs encode "account = identity, item = provenance" (`transactions`
+key to `accounts`, no `item_id`; `accounts.current_item_id` → `items`;
+`persistent_account_id` partial-unique anchor); every data table carries
+`user_id` → `users.id`.
+
+Outstanding follow-ups (now blocking from Phase 2):
 - Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
   `UPLOAD_CMD`) — wire before real data lands.
-- `JWT_SECRET` / `ACCESS_TOKEN_ENC_KEY` not yet set as Railway vars (config reads
-  them; needed Phases 7 / 2).
-- Plaid Sandbox `PLAID_CLIENT_ID` / `PLAID_SECRET` not yet obtained/set (needed
-  from Phase 2).
+- `ACCESS_TOKEN_ENC_KEY` (Fernet) needed in env to encrypt `access_token`s —
+  **required for Phase 2**. `JWT_SECRET` still deferred to Phase 7.
+- Plaid Sandbox `PLAID_CLIENT_ID` / `PLAID_SECRET` — **required for Phase 2**.
 
-**Phase 1** (real identity/provenance schema in
-`backend/db/migrations/0001_initial_schema.sql`) is the active phase.
+**Phase 2** (Link flow & item storage —
+`POST /link/token/create`, `POST /item/public_token/exchange`, encrypted
+`access_token`, account reconciliation) is the active phase.
 
 Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
 skeleton → correctness phases 1–9).
