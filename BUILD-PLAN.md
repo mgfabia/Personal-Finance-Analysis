@@ -18,6 +18,52 @@ learning-first throwaway slice (Phase S) that isn't in the spec's order.
 
 ---
 
+## Revision — build-order reprioritization (2026-06-30)
+
+**This section overrides the phase *sequence* below where they conflict. Phase
+*numbers* are unchanged — they stay as stable IDs referenced across the codebase
+(migrations, `CLAUDE.md`, memory). What changes is the order in which the remaining
+phases are built.**
+
+**Decision:** with Phases 0–4 deployed and validated on prod, pull **auth and the
+frontend forward** and **push the remaining-product sync routines (Phase 5) to last**
+among the feature work. Rationale: Phase 5 is pure repetition of a proven pattern
+(Principle 4) — it adds data breadth but no new capability the app can't demo
+without. A usable, authenticated web app that shows real transactions is higher
+value than four more raw sync routines feeding views nobody can see yet.
+
+**This works because Phase 7 splits along its dependencies** — only one slice of it
+needs Phase 5:
+
+- **7a — auth + transaction read API/views** (login, `require_auth`, JWT; the
+  transaction/monthly/category/weekly views and their read endpoints). Depends only
+  on Phase 3 data, which exists. *Buildable now.* Also retires the interim
+  `X-API-Key` guard currently on the Plaid write endpoints.
+- **7b — net-worth view** (balances + holdings − liabilities). Needs rows that only
+  exist after Phase 5. *Deferred until after Phase 5.*
+
+And Phase 8 splits similarly: sign-in + transactions view + Link-add-a-bank are
+buildable now; the **reconnect banner** depends on Phase 6 (re-auth backend), not
+Phase 5.
+
+**Revised build order (remaining phases):**
+
+1. **7a** — hand-rolled auth + transaction read API/views (replaces the `X-API-Key`
+   guard).
+2. **8 (core)** — frontend: sign-in + transactions view + Link add-a-bank.
+3. **5** — remaining product sync routines (balances, recurring, investments,
+   liabilities).
+4. **7b** — net-worth view, backfilled now that its inputs exist.
+5. **6** — re-auth & reconnect backend, then **8 (reconnect banner)**.
+6. **9** — production cutover.
+
+**Coupling to remember:** `require_auth` (built in 7a) must gate every write
+endpoint. Phase 6 adds *new* Link/write endpoints later — gate them as they're built,
+or re-sweep auth onto them after Phase 6. This is the one ordering hazard the
+reorder introduces.
+
+---
+
 ## Ordering principles (the "why" behind the sequence)
 
 These five rules decide what comes before what. Every phase ordering below traces
@@ -71,6 +117,12 @@ pattern). Phases 6 and 7 are independent and can also overlap — 6 needs item-h
 (5) for the net-worth view. One caveat: Phase 7's `require_auth` retrofit must cover
 the Link/write endpoints from Phases 2 and 6, so finish 6's endpoints before 7's
 auth sweep (or re-sweep after).
+
+> **Superseded for the actual build sequence** by the *Revision —
+> build-order reprioritization (2026-06-30)* section above: auth (7a) and the
+> frontend are pulled ahead of Phase 5, which moves to last among the feature work.
+> The critical-path *dependency graph* here is still accurate (what each phase needs);
+> only the chosen traversal order changed.
 
 **Learning-first detour:** 0 → **S** → then back to 1. Phase S is a *throwaway*
 vertical slice built right after Foundations, before any deep work; its code is

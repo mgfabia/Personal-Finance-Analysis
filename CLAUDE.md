@@ -53,18 +53,32 @@ syncing real transactions, and **real Plaid-signed webhooks passing verification
 sync-cron services, the private DB, the guard) is in the memory file
 `prod-deployment-topology.md`.
 
-Outstanding follow-ups (none block Phase 5):
+Outstanding follow-ups (none block the active phase):
 - Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
   `UPLOAD_CMD`).
-- `JWT_SECRET` deferred to Phase 7 (replaces the interim `X-API-Key` guard).
+- `JWT_SECRET` lands with auth (Phase 7a, the now-active phase) — it replaces the
+  interim `X-API-Key` guard.
 - A true forked `staging` env is deferred until there's real data to protect
   (closer to Phase 9); today prod is Sandbox-backed.
 
-**Phase 5** (Remaining products — balances, recurring, investments, liabilities,
-the same lock-and-upsert shape under the proven engine) is the active phase.
+**Build order reprioritized (2026-06-30):** auth and the frontend are pulled ahead
+of Phase 5, which moves to last among the feature work. See the *Revision —
+build-order reprioritization* section in `BUILD-PLAN.md` for the full rationale and
+the revised sequence: **7a → 8 core → 5 → 7b → 6 → 9** (phase *numbers* unchanged as
+stable IDs; only the build order changed).
+
+**Phase 7a (Hand-rolled auth + transaction read API/views) is the active phase.**
+Build `POST /auth/login` (bcrypt-check → HS256 session JWT) + a `require_auth`
+dependency (pin `algorithms=["HS256"]`), gate every data/write route with it —
+this retires the interim `X-API-Key` guard — and serve the transaction/monthly/
+category views through auth-gated read endpoints. The net-worth view (Phase 7b) is
+deferred until Phase 5 lands its inputs. **Phase 5** (Remaining products —
+balances, recurring, investments, liabilities; the same lock-and-upsert shape under
+the proven engine) is now scheduled after the frontend core.
 
 Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
-skeleton → correctness phases 1–9).
+skeleton → correctness phases 1–9), as amended by the 2026-06-30 reprioritization
+revision at the top of that file.
 
 ## Commands
 
