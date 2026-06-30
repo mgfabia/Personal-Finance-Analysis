@@ -295,11 +295,19 @@ def sync_all_items() -> list[dict[str, Any]]:
 
 
 def main() -> int:
+    print("sync run: starting", flush=True)
     results = sync_all_items()
     for r in results:
-        print(r)
+        print(r, flush=True)
+    synced = sum(1 for r in results if r.get("status") == "synced")
+    errors = sum(1 for r in results if r.get("status") == "error")
+    print(
+        f"sync run: complete — {len(results)} item(s), {synced} synced, "
+        f"{errors} error(s)",
+        flush=True,
+    )
     # Non-zero exit if any item errored, so the cron surfaces failures.
-    return 1 if any(r.get("status") == "error" for r in results) else 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
