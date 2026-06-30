@@ -42,7 +42,8 @@ from .reconcile import reconcile_accounts
 TXN_PAGE_SIZE = 500
 
 _ITEM_COLUMNS = (
-    "id", "plaid_item_id", "user_id", "access_token_encrypted", "transactions_cursor"
+    "id", "plaid_item_id", "user_id", "access_token_encrypted", "transactions_cursor",
+    "plaid_institution_id",
 )
 
 
@@ -208,7 +209,10 @@ def run_sync(item: dict[str, Any]) -> dict[str, Any]:
                     )["accounts"]
                 ]
                 with conn.transaction():
-                    reconcile_accounts(conn, item["user_id"], item["id"], accts)
+                    reconcile_accounts(
+                        conn, item["user_id"], item["id"], accts,
+                        item["plaid_institution_id"],
+                    )
                 with conn.cursor() as cur:
                     amap = _account_map(cur, item["id"])
                 if referenced - amap.keys():

@@ -182,7 +182,9 @@ def exchange_public_token(
             conn, user_id, plaid_item_id, access_token_encrypted,
             institution_id, institution_name,
         )
-        result = reconcile_accounts(conn, user_id, item_id, account_dicts)
+        result = reconcile_accounts(
+            conn, user_id, item_id, account_dicts, institution_id
+        )
 
     # Deliberately no access_token in the response (invariant 1).
     return {
