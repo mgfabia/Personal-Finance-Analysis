@@ -52,6 +52,10 @@ class Settings(BaseSettings):
         default="", validation_alias="ACCESS_TOKEN_ENC_KEY"
     )
 
+    # Interim shared secret guarding the Plaid write endpoints until Phase 7 auth.
+    # Required in deployed environments; left empty in local dev. See app/security.py.
+    api_shared_secret: str = Field(default="", validation_alias="API_SHARED_SECRET")
+
     # --- Plaid (Sandbox in dev; used from Phase 2) --------------------------
     plaid_client_id: str = Field(default="", validation_alias="PLAID_CLIENT_ID")
     plaid_secret: str = Field(default="", validation_alias="PLAID_SECRET")

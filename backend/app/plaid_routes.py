@@ -37,6 +37,7 @@ from .crypto import encrypt_token
 from .db import connect
 from .plaid_client import get_plaid_client
 from .reconcile import reconcile_accounts
+from .security import require_api_key
 from .users import current_user_id
 
 router = APIRouter(tags=["plaid"])
@@ -73,7 +74,10 @@ class ExchangeRequest(BaseModel):
 
 
 @router.post("/link/token/create")
-def create_link_token(user_id: str = Depends(current_user_id)) -> dict:
+def create_link_token(
+    user_id: str = Depends(current_user_id),
+    _: None = Depends(require_api_key),
+) -> dict:
     """Return a link_token the browser uses to open Plaid Link."""
     client = get_plaid_client()
     kwargs = dict(
@@ -144,7 +148,9 @@ def _upsert_item(
 
 @router.post("/item/public_token/exchange")
 def exchange_public_token(
-    body: ExchangeRequest, user_id: str = Depends(current_user_id)
+    body: ExchangeRequest,
+    user_id: str = Depends(current_user_id),
+    _: None = Depends(require_api_key),
 ) -> dict:
     """Exchange a public_token; store the encrypted access_token + reconcile accounts."""
     client = get_plaid_client()
