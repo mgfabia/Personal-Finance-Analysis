@@ -32,6 +32,7 @@ from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
 
+from .config import get_settings
 from .crypto import encrypt_token
 from .db import connect
 from .plaid_client import get_plaid_client
@@ -75,13 +76,19 @@ class ExchangeRequest(BaseModel):
 def create_link_token(user_id: str = Depends(current_user_id)) -> dict:
     """Return a link_token the browser uses to open Plaid Link."""
     client = get_plaid_client()
-    request = LinkTokenCreateRequest(
+    kwargs = dict(
         user=LinkTokenCreateRequestUser(client_user_id=user_id),
         client_name=CLIENT_NAME,
         products=[Products(p) for p in LINK_PRODUCTS],
         country_codes=[CountryCode(c) for c in COUNTRY_CODES],
         language="en",
     )
+    # Register the webhook so Plaid POSTs item/transaction updates (Phase 4).
+    # Omitted in local dev (no public URL).
+    webhook_url = get_settings().plaid_webhook_url
+    if webhook_url:
+        kwargs["webhook"] = webhook_url
+    request = LinkTokenCreateRequest(**kwargs)
     try:
         resp = client.link_token_create(request)
     except plaid.ApiException as exc:

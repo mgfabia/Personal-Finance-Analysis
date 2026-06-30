@@ -35,18 +35,31 @@ entrypoint is `python -m app.sync` (`sync_all_items`). All §1/§2 properties
 verified (lock-skip, atomic rollback with cursor un-advanced, tombstone
 round-trip).
 
-Outstanding follow-ups (none block Phase 4):
-- **Railway cron** not yet wired — schedule `python -m app.sync` nightly against
-  the deployed service (durability backbone; until then sync is local-only).
-- Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
-  `UPLOAD_CMD`) — wire before real data lands.
-- Deployed envs: set `ACCESS_TOKEN_ENC_KEY` / `PLAID_CLIENT_ID` / `PLAID_SECRET`
-  as Railway vars (already in local `.env`). `JWT_SECRET` still deferred to
-  Phase 7.
+**Phase 4 (Webhooks & item health) — complete (code; full delivery validates on
+deploy).** `app/webhooks.py` verifies every webhook — ES256 with
+`algorithms=["ES256"]` pinned (alg-confusion defense), `kid`→key via
+`/webhook_verification_key/get` (cached, rejects expired), `request_body_sha256`
+matched against the raw body (constant-time), and `iat` freshness. `POST
+/webhooks/plaid` (`app/webhook_routes.py`) is the thin handler: verify → branch
+→ `200` fast, with `run_sync` in a `BackgroundTasks` (never inline).
+`SYNC_UPDATES_AVAILABLE` → background sync; `ITEM` webhooks → `items.status`
+(login_required / pending_expiration / revoked). Sync-failure safety net in
+`run_sync`: `ITEM_LOGIN_REQUIRED` mid-sync flips `status`, cursor untouched.
+Verified locally: 401 on unsigned/bogus, every branch, the safety net. The
+genuine Plaid-signed delivery round-trip validates on the staging deploy (needs
+the public URL); set `PLAID_WEBHOOK_URL` there.
 
-**Phase 4** (Webhooks & item health — verified Plaid webhooks trigger the same
-`run_sync`; `ITEM` webhooks and sync-failures maintain `items.status`) is the
-active phase.
+Outstanding follow-ups (none block Phase 5):
+- **Deploy + activate** (this is the phase deploy becomes worthwhile): on the
+  Railway `staging` fork set `PLAID_*` / `ACCESS_TOKEN_ENC_KEY` /
+  `PLAID_WEBHOOK_URL`, then validate a real webhook via
+  `/sandbox/item/fire_webhook`. `main` is merged but unpushed (held until now).
+- **Railway cron** not yet wired — schedule `python -m app.sync` nightly
+  (durability backbone; until then sync is local-only).
+- Nightly `pg_dump` backup not yet scheduled. `JWT_SECRET` deferred to Phase 7.
+
+**Phase 5** (Remaining products — balances, recurring, investments, liabilities,
+the same lock-and-upsert shape under the proven engine) is the active phase.
 
 Build order is defined in `BUILD-PLAN.md` (Phase 0 → throwaway Phase S walking
 skeleton → correctness phases 1–9).
