@@ -9,9 +9,14 @@ attached to the account and never fractures (net worth stays continuous).
 Match priority:
   1. ``persistent_account_id`` — Plaid's stable cross-link anchor (when present).
   2. ``plaid_account_id`` — same item re-exchanged (id unchanged).
-  3. ``(mask, type, subtype, name)`` — re-link where Plaid gave no persistent id;
-     only trusted when it identifies exactly one existing row (never guess on an
-     ambiguous match — insert a fresh row instead).
+  3. ``(mask, type, subtype, name)`` **within the same institution** — re-link where
+     Plaid gave no persistent id; only trusted when it identifies exactly one
+     existing row (never guess on an ambiguous match — insert a fresh row instead).
+     The institution scope is load-bearing: without it, two *different* banks whose
+     accounts share a fingerprint (e.g. any two Plaid Sandbox banks, which all
+     return the same canonical account set with null persistent ids) would be
+     wrongly merged. A fingerprint only identifies "the same account" within one
+     bank.
 
 Phase 2 is almost always the empty-table case (everything inserts). The matching
 paths earn their keep at Phase 6 (re-auth/reconnect), which reuses this function.
@@ -36,6 +41,7 @@ def _raw(obj: Any) -> Json:
 def _find_existing(
     cur: psycopg.Cursor,
     user_id: str,
+    institution_id: str | None,
     persistent_account_id: str | None,
     plaid_account_id: str,
     mask: str | None,
@@ -63,16 +69,22 @@ def _find_existing(
     if row:
         return str(row[0])
 
-    # 3. Re-link with no persistent id: fall back to attributes, but only when
-    #    they pin down exactly one row. IS NOT DISTINCT FROM treats NULLs as equal.
+    # 3. Re-link with no persistent id: fall back to attributes, but only within
+    #    the SAME institution and only when they pin down exactly one row. The
+    #    join to items scopes the fingerprint to one bank (see module docstring) —
+    #    without it, lookalike accounts at different banks merge. IS NOT DISTINCT
+    #    FROM treats NULLs as equal.
     if not persistent_account_id:
         cur.execute(
-            "SELECT id FROM accounts WHERE user_id = %s "
-            "AND mask IS NOT DISTINCT FROM %s "
-            "AND type IS NOT DISTINCT FROM %s "
-            "AND subtype IS NOT DISTINCT FROM %s "
-            "AND name IS NOT DISTINCT FROM %s",
-            (user_id, mask, type_, subtype, name),
+            "SELECT a.id FROM accounts a "
+            "JOIN items i ON i.id = a.current_item_id "
+            "WHERE a.user_id = %s "
+            "AND i.plaid_institution_id IS NOT DISTINCT FROM %s "
+            "AND a.mask IS NOT DISTINCT FROM %s "
+            "AND a.type IS NOT DISTINCT FROM %s "
+            "AND a.subtype IS NOT DISTINCT FROM %s "
+            "AND a.name IS NOT DISTINCT FROM %s",
+            (user_id, institution_id, mask, type_, subtype, name),
         )
         rows = cur.fetchall()
         if len(rows) == 1:
@@ -86,10 +98,13 @@ def reconcile_accounts(
     user_id: str,
     item_id: str,
     accounts: list[dict[str, Any]],
+    institution_id: str | None,
 ) -> dict[str, Any]:
     """Upsert the item's accounts by identity; re-point them at ``item_id``.
 
     ``accounts`` are Plaid account payloads as plain dicts (account.to_dict()).
+    ``institution_id`` is the linked item's Plaid institution — it scopes the
+    fingerprint fallback so only same-bank accounts can match (§3).
     Returns a summary: counts plus a per-account action for the response/log.
     """
     inserted = 0
@@ -113,7 +128,7 @@ def reconcile_accounts(
             currency = balances.get("iso_currency_code")
 
             existing_id = _find_existing(
-                cur, user_id, persistent_account_id, plaid_account_id,
+                cur, user_id, institution_id, persistent_account_id, plaid_account_id,
                 mask, type_, subtype, name,
             )
 
