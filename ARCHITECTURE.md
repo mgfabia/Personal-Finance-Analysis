@@ -64,7 +64,8 @@ docker-compose.yml  local Postgres for dev
 | `crypto.py` | Fernet `encrypt_token` / `decrypt_token` for the Plaid `access_token`. The DB only ever holds ciphertext. |
 | `plaid_client.py` | Builds the Plaid SDK client from env (client id / secret / environment). |
 | `users.py` | `get_or_create_default_user` — bootstraps the single `users` row (idempotent, keyed on `APP_USER_EMAIL`). |
-| `main.py` | The FastAPI app: CORS middleware + all routers + `/health` and `/health/db`. |
+| `logging_setup.py` | `configure_logging()` + a hand-rolled `JsonFormatter`. One config, shared by the API (called at import in `main.py`, so it overrides uvicorn's) and the sync cron (`sync.py`'s `main()`). Emits JSON lines to stdout (`LOG_FORMAT=plain` for a readable local console); merges `extra={...}` fields, folds in tracebacks. Railway's observability parses the JSON into filterable fields. No log-shipping vendor, no dependency. |
+| `main.py` | The FastAPI app: `configure_logging()` at import, CORS middleware, a request-logging middleware (method/path/status/`duration_ms`/`user_id`/client — `user_id` read from `request.state`, stamped by `require_auth`), a global exception handler (logs unhandled errors with context, returns a clean 500), all routers + `/health` and `/health/db`. |
 
 ### Flow 1 — Link a bank (`plaid_routes.py`, `reconcile.py`)
 
