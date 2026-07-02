@@ -19,6 +19,7 @@ Verification needs the *raw* body (for the SHA-256 claim), so we read
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -28,6 +29,7 @@ from .sync import _record_error, fetch_item, run_sync
 from .webhooks import verify_webhook
 
 router = APIRouter(tags=["webhooks"])
+logger = logging.getLogger("app.webhook")
 
 # ITEM webhook_code → items.status. Codes not listed (e.g. NEW_ACCOUNTS_AVAILABLE,
 # WEBHOOK_UPDATE_ACKNOWLEDGED) don't change health and are recorded but ignored.
@@ -43,11 +45,16 @@ def _run_sync_for_item(plaid_item_id: str) -> None:
     """Background task: sync one item, isolating/recording any failure."""
     item = fetch_item(plaid_item_id)
     if item is None:
+        logger.warning("webhook.sync_unknown_item", extra={"item": plaid_item_id})
         return  # unknown or retired item — nothing to do
     try:
-        run_sync(item)
+        result = run_sync(item)
+        logger.info("webhook.sync", extra=result)
     except Exception as exc:
         _record_error(item, exc)
+        logger.exception(
+            "webhook.sync_failed", extra={"item": plaid_item_id, "status": "error"}
+        )
 
 
 def _apply_item_webhook(webhook_code: str, plaid_item_id: str, payload: dict) -> None:
@@ -93,11 +100,20 @@ def handle_webhook(payload: dict, background: BackgroundTasks) -> None:
 async def plaid_webhook(request: Request, background: BackgroundTasks) -> dict:
     raw = await request.body()
     if not verify_webhook(raw, request.headers.get("plaid-verification")):
+        logger.warning("webhook.verify_failed", extra={"client": request.client.host if request.client else None})
         raise HTTPException(status_code=401, detail="webhook verification failed")
     try:
         payload = json.loads(raw or b"{}")
     except ValueError:
         raise HTTPException(status_code=400, detail="invalid JSON body")
 
+    logger.info(
+        "webhook.received",
+        extra={
+            "webhook_type": payload.get("webhook_type"),
+            "webhook_code": payload.get("webhook_code"),
+            "item": payload.get("item_id"),
+        },
+    )
     handle_webhook(payload, background)
     return {"status": "received"}  # 200 fast; work continues in the background

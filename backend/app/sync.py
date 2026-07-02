@@ -23,6 +23,7 @@ Two non-negotiables are enforced here:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import psycopg
@@ -35,8 +36,11 @@ from plaid.model.transactions_sync_request import TransactionsSyncRequest
 from .config import get_settings
 from .crypto import decrypt_token
 from .db import connect
+from .logging_setup import configure_logging
 from .plaid_client import get_plaid_client
 from .reconcile import reconcile_accounts
+
+logger = logging.getLogger("app.sync")
 
 # Plaid caps a sync page at 500. Personal histories fit in a handful of pages.
 TXN_PAGE_SIZE = 500
@@ -291,24 +295,32 @@ def sync_all_items() -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for item in items:
         try:
-            results.append(run_sync(item))
+            result = run_sync(item)
+            results.append(result)
+            # One structured line per item — filter by status/item in Railway.
+            logger.info("sync.item", extra=result)
         except Exception as exc:  # one item's failure must not stop the others
             _record_error(item, exc)
             results.append({"item": item["plaid_item_id"], "status": "error", "error": str(exc)})
+            logger.exception(
+                "sync.item_failed",
+                extra={"item": item["plaid_item_id"], "status": "error"},
+            )
     return results
 
 
 def main() -> int:
-    print("sync run: starting", flush=True)
+    configure_logging()
+    logger.info("sync.start")
     results = sync_all_items()
-    for r in results:
-        print(r, flush=True)
     synced = sum(1 for r in results if r.get("status") == "synced")
     errors = sum(1 for r in results if r.get("status") == "error")
-    print(
-        f"sync run: complete — {len(results)} item(s), {synced} synced, "
-        f"{errors} error(s)",
-        flush=True,
+    # A single summary line; ERROR level when anything failed so it stands out in
+    # the log stream and matches the non-zero exit below.
+    log = logger.error if errors else logger.info
+    log(
+        "sync.complete",
+        extra={"items": len(results), "synced": synced, "errors": errors},
     )
     # Non-zero exit if any item errored, so the cron surfaces failures.
     return 1 if errors else 0

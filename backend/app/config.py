@@ -35,6 +35,13 @@ class Settings(BaseSettings):
 
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
 
+    # --- Observability ------------------------------------------------------
+    # Root log level and output shape. Railway's observability aggregates
+    # stdout/stderr and auto-parses JSON lines into filterable fields, so prod
+    # runs `json`; local dev can set LOG_FORMAT=plain for readable console logs.
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    log_format: str = Field(default="json", validation_alias="LOG_FORMAT")  # json | plain
+
     # Browser origins allowed to call the API (CORS). The frontend is a separate
     # origin (its own Railway service in prod, localhost:3000 in dev), so the
     # browser preflights cross-origin calls. Comma-separated; defaults to the dev
