@@ -8,6 +8,8 @@ Run locally:  uvicorn app.main:app --reload  (from the backend/ directory)
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -50,10 +52,14 @@ def health_db() -> JSONResponse:
     """Readiness: the backend can reach Railway Postgres (DATABASE_URL)."""
     try:
         ok = ping()
-    except Exception as exc:  # surface the reason without leaking the URL
+    except Exception:
+        # Trust boundary: the operator gets the full exception (logs); the public
+        # caller gets only the category. psycopg error strings carry internal
+        # hostname/port/username — never return str(exc) to the internet.
+        logging.getLogger("app.health").error("db health check failed", exc_info=True)
         return JSONResponse(
             status_code=503,
-            content={"status": "error", "database": "unreachable", "detail": str(exc)},
+            content={"status": "error", "database": "unreachable"},
         )
     return JSONResponse(
         status_code=200 if ok else 503,
