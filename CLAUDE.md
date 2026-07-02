@@ -206,6 +206,10 @@ Two documents define the project; read them before designing or building anythin
 
 When the spec and code disagree, the spec wins until a deliberate decision changes it.
 
+For *how the code is organized and works* (the map — layers, the four flows, data
+model, deployment), see **`ARCHITECTURE.md`**. It tracks the code, not the spec: when
+it and the code disagree, the code wins and the doc gets updated.
+
 ## What this app is
 
 A single-user (built scalable) personal-finance web app that links bank accounts via
