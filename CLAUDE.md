@@ -62,12 +62,9 @@ Outstanding follow-ups (none block the active phase):
   `UPLOAD_CMD`).
 - A true forked `staging` env is deferred until there's real data to protect
   (closer to Phase 9); today prod is Sandbox-backed.
-- **Prod deploy steps for 7a/8 (pending):** set `JWT_SECRET` (Railway env var) and
-  run `python -m app.set_password` once against the prod DB to replace the unusable
-  bootstrap hash; the interim `X-API-Key` guard / `API_SHARED_SECRET` env var is now
-  dead and can be removed from Railway. For the frontend: add a Next.js service to
-  the Railway project, set `NEXT_PUBLIC_API_URL` to the backend URL and the backend's
-  `CORS_ALLOW_ORIGINS` to the deployed frontend URL.
+- **Prod setup for 7a/8 (pending):** `JWT_SECRET`, `set_password`, the frontend
+  service, and dropping the dead `API_SHARED_SECRET` — see the *First-time
+  production setup (Phase 7a/8)* section under Commands for the full steps.
 
 **Build order reprioritized (2026-06-30):** auth and the frontend are pulled ahead
 of Phase 5, which moves to last among the feature work. See the *Revision —
@@ -153,6 +150,46 @@ their own Railway Postgres (`${{Postgres.DATABASE_URL}}`).
 **Backups:** `DATABASE_URL=... ./scripts/backup.sh` (set `UPLOAD_CMD` for off-Railway push).
 
 There are no test or lint commands yet; add them here when introduced.
+
+## First-time production setup (Phase 7a/8)
+
+The code auto-deploys on push and migrations auto-apply, but auth + frontend need
+one-time config/data that isn't in git. Do this once on Railway.
+
+**1. Set `JWT_SECRET` (backend service).** The HS256 signing key for session
+tokens; `require_auth`/`create_session_token` read it from env and the app *raises*
+if it's empty (login would 500). Generate and set — never commit it:
+`python -c "import secrets; print(secrets.token_urlsafe(64))"`.
+
+**2. Set the login password with `set_password`.** There is **no signup endpoint**
+by design (single-user; the spec excludes it) — `set_password` *is* the credential
+bootstrap. Phase 2 created the one `users` row with a deliberately unusable
+placeholder hash (fail-closed until a password is set); `set_password` overwrites it
+**in place** (keyed on `APP_USER_EMAIL`), preserving the row's `id` so all attached
+data stays attached. Must run **inside Railway** (the prod DB is private, inv. 7 —
+unreachable from a laptop; and `getpass` needs a TTY):
+```
+railway ssh        # or the backend service's Shell in the dashboard
+python -m app.set_password        # prompts, no echo; do NOT use --password (logs plaintext)
+psql "$DATABASE_URL" -c "SELECT email, left(password_hash,7) FROM users;"  # verify: $2b$12$, not !placeh
+```
+`APP_USER_EMAIL` is **not** set in prod, so it defaults to `owner@localhost`
+(`config.py`) — which is what prod bootstrapped with, so `set_password` targets that
+same row and you log in as `owner@localhost`. **To use a real email, RENAME the
+existing row — never create a second one** (a new row = data stranded under the old
+`id`, the "two-users trap"): `UPDATE users SET email='you@example.com';` then set
+`APP_USER_EMAIL` to match and run `set_password`.
+
+**3. Deploy the frontend as a new Railway service** (same project; decided
+2026-06-30, not Vercel). Root `/frontend`, build `npm run build`, start `npm run
+start`. Set two vars that point at each other: `NEXT_PUBLIC_API_URL` (frontend) = the
+backend's public URL; `CORS_ALLOW_ORIGINS` (backend) = the frontend's public URL
+(else the browser blocks cross-origin API calls; both default to localhost).
+
+**4. Drop `API_SHARED_SECRET` (backend).** Dead since the interim `X-API-Key` guard
+was deleted (real auth replaced it). Cleanup only — harmless if left.
+
+Order: 1→2 makes prod auth work; 3 is independent; 4 anytime.
 
 ## Source of truth
 
