@@ -151,6 +151,16 @@ their own Railway Postgres (`${{Postgres.DATABASE_URL}}`).
 
 There are no test or lint commands yet; add them here when introduced.
 
+**Logging/observability:** both the API and the sync cron emit structured JSON
+log lines to stdout via `app/logging_setup.py`; Railway's observability aggregates
+and parses them (filter by `item`, `status`, `user_id`, `duration_ms`, …). Env
+knobs: `LOG_LEVEL` (default `INFO`), `LOG_FORMAT` (`json` default; set `plain` in
+local dev for a readable console). Read-based only — no alerting/dead-man's-switch
+yet (deferred; the nightly-cron email digest is planned for Phase 6). The API logs
+one access line per request + a global handler line for any unhandled 500; the
+cron logs one line per item plus a `sync.complete` summary (ERROR level + non-zero
+exit when any item failed).
+
 ## First-time production setup (Phase 7a/8)
 
 The code auto-deploys on push and migrations auto-apply, but auth + frontend need
