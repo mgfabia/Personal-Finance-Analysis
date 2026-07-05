@@ -201,6 +201,35 @@ was deleted (real auth replaced it). Cleanup only — harmless if left.
 
 Order: 1→2 makes prod auth work; 3 is independent; 4 anytime.
 
+## Security runbooks
+
+Incident procedures — written down *before* they're needed. All secrets rotate via
+Railway env vars; none require code changes.
+
+- **Session token leaked / suspected** (JWT copied from localStorage, device
+  stolen): rotate `JWT_SECRET` on the backend service and redeploy. Sessions are
+  stateless HS256, so rotating the secret instantly invalidates **every** token —
+  there is no per-token revocation, and that's fine for one user (you just log in
+  again). Also change the password (`set_password`) if the device could have
+  captured it.
+- **`ACCESS_TOKEN_ENC_KEY` leaked / scheduled rotation**: three-step MultiFernet
+  rotation — prepend the new key (comma-separated, newest first), deploy, run
+  `python -m app.rotate_enc_key` inside Railway, then drop the old key. Full
+  runbook in `app/crypto.py`'s docstring. Never *replace* the key in one step —
+  stored tokens would be orphaned and every bank would need a manual re-link.
+- **Plaid credentials leaked** (`PLAID_SECRET`): rotate in the Plaid dashboard
+  (it supports two live secrets for exactly this), update the Railway env var.
+  Existing access_tokens keep working — they're bound to the client_id, not the
+  secret.
+- **Locked out by the login throttle** (3 failures / 30 min, global): wait out
+  the window, or restart the backend service (the budget is in-memory). Check
+  `logger = "app.auth"` in Railway logs first — if the failures weren't yours,
+  that's an active attack, not a typo.
+- **Database compromise suspected**: access_tokens in `items` are ciphertext
+  (useless without `ACCESS_TOKEN_ENC_KEY` — separate system), but rotate both
+  that key and `JWT_SECRET` anyway, and audit Plaid dashboard logs for
+  unexpected API calls.
+
 ## Source of truth
 
 Two documents define the project; read them before designing or building anything:
