@@ -170,10 +170,16 @@ One-time setup (Railway + Cloudflare dashboards):
 3. Railway: new service from this repo, config path
    `scripts/railway.backup.json`, env vars: `DATABASE_URL` =
    `${{Postgres.DATABASE_URL}}`, `AGE_RECIPIENT`, `UPLOAD_CMD` =
-   `rclone copy "$1" r2:pf-backups/`, and rclone's R2 connection:
+   `rclone copy "$1" R2:pf-backups/`, and rclone's R2 connection:
    `RCLONE_CONFIG_R2_TYPE=s3`, `RCLONE_CONFIG_R2_PROVIDER=Cloudflare`,
    `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`,
-   `RCLONE_CONFIG_R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com`.
+   `RCLONE_CONFIG_R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com`
+   (the account id appears exactly once; paste the dashboard's S3 endpoint as
+   the whole value), and `RCLONE_CONFIG_R2_NO_CHECK_BUCKET=true` — required
+   with a bucket-scoped token: rclone otherwise tries an account-level
+   bucket-exists/create call the scoped token rightly lacks, and 403s with
+   "failed to prepare upload: AccessDenied". Reconfigure the tool; never widen
+   the token to Admin to make the error go away.
 4. Trigger a manual run; confirm the `.age` object lands in the bucket; then do
    one restore drill (runbook below) so the recovery path is *tested*, not hoped.
 
