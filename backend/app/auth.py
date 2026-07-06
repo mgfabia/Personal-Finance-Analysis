@@ -101,6 +101,9 @@ def require_auth(
             token,
             _jwt_secret(),
             algorithms=[JWT_ALG],  # inv. 8 — pin the alg; never trust the header
+            # Require the claims we always mint: absent-exp would otherwise be
+            # treated as "never expires" (PyJWT only validates exp when present).
+            options={"require": ["exp", "sub"]},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="token expired")
