@@ -14,7 +14,12 @@ import { useCallback, useEffect, useState } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
 import { Button } from "./ui/Button";
-import { createLinkToken, exchangePublicToken } from "../lib/api";
+import {
+  clearStoredLinkToken,
+  createLinkToken,
+  exchangePublicToken,
+  storeLinkToken,
+} from "../lib/api";
 
 export default function LinkButton({ onLinked }: { onLinked: () => void }) {
   const [token, setToken] = useState<string | null>(null);
@@ -32,6 +37,7 @@ export default function LinkButton({ onLinked }: { onLinked: () => void }) {
       } finally {
         setBusy(false);
         setToken(null);
+        clearStoredLinkToken();
       }
     },
     [onLinked],
@@ -51,6 +57,9 @@ export default function LinkButton({ onLinked }: { onLinked: () => void }) {
     setBusy(true);
     try {
       const { link_token } = await createLinkToken();
+      // OAuth banks navigate away and back to /oauth, which re-initializes
+      // Link from this stored token (React state doesn't survive the trip).
+      storeLinkToken(link_token);
       setToken(link_token);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start Plaid Link.");

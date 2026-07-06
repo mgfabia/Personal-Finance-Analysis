@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     # public URL); set to the Railway URL in deployed envs (Phase 4).
     plaid_webhook_url: str = Field(default="", validation_alias="PLAID_WEBHOOK_URL")
 
+    # OAuth redirect URI for Plaid Link (Production; most major US banks use an
+    # OAuth flow that requires it). Must exactly match a URI registered under
+    # "Allowed redirect URIs" in the Plaid dashboard — the frontend's /oauth
+    # page (e.g. https://<frontend>/oauth). Empty in Sandbox/local dev, where
+    # Link works without OAuth.
+    plaid_redirect_uri: str = Field(default="", validation_alias="PLAID_REDIRECT_URI")
+
     def require_database_url(self) -> str:
         """Fail loudly when a DB operation is attempted without a URL."""
         if not self.database_url:

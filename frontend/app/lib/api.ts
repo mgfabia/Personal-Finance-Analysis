@@ -150,6 +150,24 @@ export function getCategorySummary(params: { month?: string } = {}) {
 }
 
 // --- Plaid Link flow (Phase 2 endpoints) ----------------------------------
+// OAuth banks redirect the browser away mid-Link and back to /oauth, so the
+// link_token must survive the round-trip. localStorage (not React state) per
+// Plaid's OAuth guide — the return can even land in a fresh tab on mobile.
+const LINK_TOKEN_KEY = "pfa_link_token";
+
+export function storeLinkToken(token: string): void {
+  window.localStorage.setItem(LINK_TOKEN_KEY, token);
+}
+
+export function getStoredLinkToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(LINK_TOKEN_KEY);
+}
+
+export function clearStoredLinkToken(): void {
+  window.localStorage.removeItem(LINK_TOKEN_KEY);
+}
+
 export function createLinkToken() {
   return apiFetch<{ link_token: string; expiration: string }>("/link/token/create", {
     method: "POST",

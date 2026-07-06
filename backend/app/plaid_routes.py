@@ -98,6 +98,11 @@ def create_link_token(
     webhook_url = get_settings().plaid_webhook_url
     if webhook_url:
         kwargs["webhook"] = webhook_url
+    # OAuth banks (most major US institutions in Production) redirect back to
+    # this URI mid-Link; it must also be registered in the Plaid dashboard.
+    redirect_uri = get_settings().plaid_redirect_uri
+    if redirect_uri:
+        kwargs["redirect_uri"] = redirect_uri
     request = LinkTokenCreateRequest(**kwargs)
     try:
         resp = client.link_token_create(request)
