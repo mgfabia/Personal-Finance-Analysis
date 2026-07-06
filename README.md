@@ -138,3 +138,7 @@ can't be scripted here:
 Exit criteria met when: backend boots and reaches Railway Postgres over the
 private network; the empty migration applies cleanly; secrets resolve from env
 in both local and Railway.
+
+## License
+
+[MIT](./LICENSE) — use, copy, modify, and redistribute freely; attribution required, no warranty.

@@ -1,6 +1,16 @@
 # macOS
 .DS_Store
 
+# Claude Code local settings (machine-specific permission allowlist)
+.claude/settings.local.json
+
+# Private docs — runbooks, plans, spec, architecture notes. Kept local-only;
+# the public README covers technology & architecture choices instead.
+CLAUDE.md
+ARCHITECTURE.md
+BUILD-PLAN.md
+personal-finance-rebuild-architecture.md
+
 # Secrets / env (never commit — Plaid secret, JWT_SECRET, DATABASE_URL, encryption key)
 .env
 .env.*
