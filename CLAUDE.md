@@ -58,16 +58,19 @@ sync-cron services, the private DB, the guard) is in the memory file
 `prod-deployment-topology.md`.
 
 Outstanding follow-ups (none block the active phase):
-- Nightly backup: code complete (`scripts/backup.sh` + `backup.Dockerfile` +
-  `railway.backup.json` — pg_dump → age-encrypt → rclone to Cloudflare R2;
-  round-trip verified locally). Pending: the one-time Railway/R2 dashboard
-  setup (bucket, token, env vars, cron service) — steps in the *Backups*
-  subsection under Commands.
 - A true forked `staging` env is deferred until there's real data to protect
   (closer to Phase 9); today prod is Sandbox-backed.
-- **Prod setup for 7a/8 (pending):** `JWT_SECRET`, `set_password`, the frontend
-  service, and dropping the dead `API_SHARED_SECRET` — see the *First-time
-  production setup (Phase 7a/8)* section under Commands for the full steps.
+- **Local/prod Postgres parity gap:** prod Railway Postgres is **18.x**, the
+  local docker-compose still pins `postgres:16` (its "match Railway" comment
+  predates the drift). Bump compose to 18 when convenient (`docker compose
+  down -v`, re-migrate, re-sync — local data is disposable sandbox). Found
+  2026-07-06 when pg_dump 16 aborted against the 18.4 prod server.
+
+Done (previously listed here): **nightly backups** are live and verified
+(2026-07-06) — backup-cron service, pg_dump → age → R2, restore drill passed;
+see *Backups* under Commands. **Prod setup for 7a/8** completed 2026-07-01
+(auth live on prod, frontend deployed); the *First-time production setup*
+section below is kept as reference.
 
 **Build order reprioritized (2026-06-30):** auth and the frontend are pulled ahead
 of Phase 5, which moves to last among the feature work. See the *Revision —
