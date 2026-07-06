@@ -36,18 +36,46 @@ from .plaid_client import get_plaid_client
 _MAX_AGE_SECONDS = 300
 _key_cache: dict[str, dict[str, Any]] = {}
 
+# Negative cache: kids whose lookup failed, with the monotonic time of failure.
+# The endpoint is unauthenticated, so without this any junk POST with a random
+# kid costs a live Plaid API call (quota burn on demand). TTL'd — not permanent
+# like successes — because an unknown kid may be a freshly rotated *real* key;
+# bounded, because the attacker chooses the kid strings and must not be able to
+# grow the dict without limit.
+_FAILED_KID_TTL_SECONDS = 300
+_FAILED_KID_MAX = 1024
+_failed_kids: dict[str, float] = {}
 
-def _verification_key(kid: str) -> dict[str, Any]:
-    """Fetch (and cache) the JWK for a key id from Plaid."""
+
+def _verification_key(kid: str) -> dict[str, Any] | None:
+    """Fetch (and cache) the JWK for a key id from Plaid; None if unfetchable."""
     cached = _key_cache.get(kid)
     if cached is not None:
         return cached
+
+    now = time.monotonic()
+    failed_at = _failed_kids.get(kid)
+    if failed_at is not None and (now - failed_at) < _FAILED_KID_TTL_SECONDS:
+        return None  # recently failed — reject without touching Plaid
+
     client = get_plaid_client()
-    resp = client.webhook_verification_key_get(
-        WebhookVerificationKeyGetRequest(key_id=kid)
-    )
+    try:
+        resp = client.webhook_verification_key_get(
+            WebhookVerificationKeyGetRequest(key_id=kid)
+        )
+    except Exception:
+        if len(_failed_kids) >= _FAILED_KID_MAX:
+            # Evict expired entries; if a flood filled it with live ones, reset —
+            # losing negative entries only costs extra Plaid calls, never safety.
+            fresh = {k: t for k, t in _failed_kids.items() if (now - t) < _FAILED_KID_TTL_SECONDS}
+            _failed_kids.clear()
+            if len(fresh) < _FAILED_KID_MAX:
+                _failed_kids.update(fresh)
+        _failed_kids[kid] = now
+        return None
     jwk = resp["key"].to_dict()
     _key_cache[kid] = jwk
+    _failed_kids.pop(kid, None)
     return jwk
 
 
@@ -64,12 +92,9 @@ def verify_webhook(raw_body: bytes, verification_header: str | None) -> bool:
     if header.get("alg") != "ES256" or not header.get("kid"):
         return False
 
-    # 2/3. Fetch the key for this kid; reject if rotated/expired.
-    try:
-        jwk = _verification_key(header["kid"])
-    except Exception:
-        return False
-    if jwk.get("expired_at") is not None:
+    # 2/3. Fetch the key for this kid; reject if unknown, rotated, or expired.
+    jwk = _verification_key(header["kid"])
+    if jwk is None or jwk.get("expired_at") is not None:
         return False
 
     try:

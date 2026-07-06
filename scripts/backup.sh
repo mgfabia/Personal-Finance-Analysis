@@ -10,8 +10,15 @@
 # (S3 / Backblaze B2 / rclone remote / etc.); that destination + its creds are
 # yours to provide.
 #
+# Encryption (AGE_RECIPIENT, strongly recommended for prod): when set, the dump
+# is encrypted to that age public key before upload and the plaintext is
+# deleted. Asymmetric on purpose — the env can only *encrypt*; the private key
+# (which decrypts) lives offline in the password manager, so a leaked bucket,
+# storage token, or full Railway env yields ciphertext only. Restore runbook is
+# in CLAUDE.md §Security runbooks.
+#
 # Run manually:        DATABASE_URL=... ./scripts/backup.sh
-# Schedule (prod):     Railway cron service, daily, calling this script.
+# Schedule (prod):     Railway cron service (scripts/backup.Dockerfile), daily.
 
 set -euo pipefail
 
@@ -29,6 +36,16 @@ echo "[backup] dumping database -> ${OUT}"
 pg_dump --format=custom --no-owner --no-privileges --dbname="$DATABASE_URL" --file="$OUT"
 echo "[backup] dump complete ($(du -h "$OUT" | cut -f1))"
 
+# --- Encrypt before upload (AGE_RECIPIENT = age public key) -------------------
+if [[ -n "${AGE_RECIPIENT:-}" ]]; then
+  echo "[backup] encrypting to age recipient"
+  age --encrypt --recipient "$AGE_RECIPIENT" --output "${OUT}.age" "$OUT"
+  rm "$OUT"                     # plaintext never leaves this container
+  OUT="${OUT}.age"
+elif [[ -n "${UPLOAD_CMD:-}" ]]; then
+  echo "[backup] WARNING: AGE_RECIPIENT not set — uploading an UNENCRYPTED dump." >&2
+fi
+
 # --- Off-Railway upload (REQUIRED in prod — fill this in) --------------------
 # Set UPLOAD_CMD to a command that takes the dump path as $1. Examples:
 #   aws s3 cp "$1" s3://my-bucket/pf-backups/
@@ -42,6 +59,6 @@ else
   echo "[backup]          Set UPLOAD_CMD before relying on this in production." >&2
 fi
 
-# --- Local retention --------------------------------------------------------
-find "$BACKUP_DIR" -name 'pf_*.dump' -type f -mtime +"$RETAIN_DAYS" -delete || true
+# --- Local retention (matters for on-host runs; cron containers are ephemeral) --
+find "$BACKUP_DIR" -name 'pf_*.dump*' -type f -mtime +"$RETAIN_DAYS" -delete || true
 echo "[backup] done"

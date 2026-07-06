@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .auth import DECOY_PASSWORD_HASH, create_session_token, verify_password
 from .db import connect
@@ -41,8 +41,11 @@ _login_budget = FailureBudget(LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS)
 
 
 class LoginBody(BaseModel):
-    email: str
-    password: str
+    # Caps are anti-abuse, not policy: bcrypt reads only the first 72 bytes of a
+    # password anyway, so a megabyte submission buys an attacker pure CPU burn;
+    # 254 is the RFC upper bound on an email address.
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=256)
 
 
 class TokenResponse(BaseModel):
