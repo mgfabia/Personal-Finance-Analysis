@@ -1,16 +1,20 @@
 # Backup cron service image — Railway builds this via scripts/railway.backup.json.
 #
-# A dedicated image (not the backend's Railpack build) because the job needs
-# binaries a Python app image doesn't carry: pg_dump, rclone, age. Alpine keeps
-# it tiny. postgresql16-client is pinned to the server's major version —
-# pg_dump must be >= the server it dumps, and 16 == 16 by construction.
-FROM alpine:3.20
+# Based on the official postgres alpine image so pg_dump matches the PROD server
+# major version by construction (prod Railway Postgres is 18.x; pg_dump must be
+# >= the server it dumps — 18 also dumps the local dev 16 fine, newer-client-
+# older-server is supported). The first cron run against prod failed on exactly
+# this: a hand-pinned postgresql16-client vs the 18.4 server. If prod Postgres
+# is ever major-upgraded, bump this tag to match.
+FROM postgres:18-alpine
 
-RUN apk add --no-cache bash postgresql16-client rclone age
+RUN apk add --no-cache bash rclone age
 
 COPY scripts/backup.sh /usr/local/bin/backup.sh
 RUN chmod +x /usr/local/bin/backup.sh
 
-# Runs once per cron invocation and exits (restartPolicyType NEVER); a non-zero
-# exit surfaces as a failed deploy in Railway, which is the alerting we have.
+# The postgres base image's entrypoint boots a database server; this service is
+# a client-only cron job. Clear it so the container runs the backup and exits
+# (restartPolicyType NEVER); a non-zero exit surfaces as a failed run in Railway.
+ENTRYPOINT []
 CMD ["bash", "/usr/local/bin/backup.sh"]
