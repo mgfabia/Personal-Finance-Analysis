@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 #
 # Nightly Postgres backup — pg_dump to a timestamped file, then push off-Railway.
-# A finance app owns its own backups (CLAUDE.md / build plan Phase 0): Railway's
-# disk is NOT a backup. This is wired in Phase 0 so durability exists before any
-# real data lands.
+# A finance app owns its own backups: Railway's disk is NOT a backup. This is
+# wired early so durability exists before any real data lands.
 #
 # Requires: pg_dump (postgresql-client), DATABASE_URL in the environment.
 # Off-Railway upload is intentionally a hook (UPLOAD_CMD) — fill in YOUR storage
@@ -14,8 +13,10 @@
 # is encrypted to that age public key before upload and the plaintext is
 # deleted. Asymmetric on purpose — the env can only *encrypt*; the private key
 # (which decrypts) lives offline in the password manager, so a leaked bucket,
-# storage token, or full Railway env yields ciphertext only. Restore runbook is
-# in CLAUDE.md §Security runbooks.
+# storage token, or full Railway env yields ciphertext only. Restore: fetch the
+# newest .age object, decrypt with the offline private key
+# (`age --decrypt -i key.txt -o pf.dump pf_<TS>.dump.age`), then
+# `pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL" pf.dump`.
 #
 # Run manually:        DATABASE_URL=... ./scripts/backup.sh
 # Schedule (prod):     Railway cron service (scripts/backup.Dockerfile), daily.

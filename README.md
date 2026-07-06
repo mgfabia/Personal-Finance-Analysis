@@ -5,11 +5,6 @@ Single-user (built scalable) personal-finance web app: links bank accounts via
 UI off a **FastAPI** backend. Replaces an older Raspberry-Pi + dbt + Grafana
 system.
 
-> **Source of truth:** [`personal-finance-rebuild-architecture.md`](./personal-finance-rebuild-architecture.md)
-> (the locked spec — *what* & *why*) and [`BUILD-PLAN.md`](./BUILD-PLAN.md)
-> (phased build order). Read these before changing anything; the spec wins when
-> spec and code disagree.
-
 ## Status
 
 **Phases 0–4 complete.** Phase 0 (Foundations) is live on Railway; Phase 1 (the
