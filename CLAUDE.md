@@ -58,8 +58,11 @@ sync-cron services, the private DB, the guard) is in the memory file
 `prod-deployment-topology.md`.
 
 Outstanding follow-ups (none block the active phase):
-- Nightly `pg_dump` backup not yet scheduled (Railway cron + off-Railway
-  `UPLOAD_CMD`).
+- Nightly backup: code complete (`scripts/backup.sh` + `backup.Dockerfile` +
+  `railway.backup.json` — pg_dump → age-encrypt → rclone to Cloudflare R2;
+  round-trip verified locally). Pending: the one-time Railway/R2 dashboard
+  setup (bucket, token, env vars, cron service) — steps in the *Backups*
+  subsection under Commands.
 - A true forked `staging` env is deferred until there's real data to protect
   (closer to Phase 9); today prod is Sandbox-backed.
 - **Prod setup for 7a/8 (pending):** `JWT_SECRET`, `set_password`, the frontend
@@ -147,7 +150,32 @@ their own Railway Postgres (`${{Postgres.DATABASE_URL}}`).
 
 **Frontend** (from `/frontend`): `npm install` then `npm run dev` (build: `npm run build`).
 
-**Backups:** `DATABASE_URL=... ./scripts/backup.sh` (set `UPLOAD_CMD` for off-Railway push).
+**Backups:** nightly `pg_dump` → `age`-encrypt → upload to Cloudflare R2, as a
+dedicated Railway cron service built from `scripts/backup.Dockerfile` (config:
+`scripts/railway.backup.json`, daily 09:30 UTC — after the nightly sync so the
+dump includes it). `scripts/backup.sh` is provider-agnostic: R2 lives entirely
+in env vars. Encryption is asymmetric (age): `AGE_RECIPIENT` (public key) in
+env can only *encrypt*; the private key lives offline in the password manager —
+a leaked bucket/token/env yields ciphertext only. Local run:
+`DATABASE_URL=... AGE_RECIPIENT=... UPLOAD_CMD=... ./scripts/backup.sh`.
+
+One-time setup (Railway + Cloudflare dashboards):
+1. Generate the age keypair **locally** (`brew install age && age-keygen`):
+   private key → password manager (lose it = backups unreadable); public key
+   (`age1...`) → the `AGE_RECIPIENT` env var.
+2. Cloudflare: create a private R2 bucket (e.g. `pf-backups`); create an R2 API
+   token, **Object Read & Write, scoped to that bucket only**; note the
+   account-id endpoint. Add a lifecycle rule (e.g. delete after 90 days) for
+   bucket-side retention.
+3. Railway: new service from this repo, config path
+   `scripts/railway.backup.json`, env vars: `DATABASE_URL` =
+   `${{Postgres.DATABASE_URL}}`, `AGE_RECIPIENT`, `UPLOAD_CMD` =
+   `rclone copy "$1" r2:pf-backups/`, and rclone's R2 connection:
+   `RCLONE_CONFIG_R2_TYPE=s3`, `RCLONE_CONFIG_R2_PROVIDER=Cloudflare`,
+   `RCLONE_CONFIG_R2_ACCESS_KEY_ID`, `RCLONE_CONFIG_R2_SECRET_ACCESS_KEY`,
+   `RCLONE_CONFIG_R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com`.
+4. Trigger a manual run; confirm the `.age` object lands in the bucket; then do
+   one restore drill (runbook below) so the recovery path is *tested*, not hoped.
 
 There are no test or lint commands yet; add them here when introduced.
 
@@ -229,6 +257,18 @@ Railway env vars; none require code changes.
   (useless without `ACCESS_TOKEN_ENC_KEY` — separate system), but rotate both
   that key and `JWT_SECRET` anyway, and audit Plaid dashboard logs for
   unexpected API calls.
+- **Restore from backup** (data loss / bad migration / disaster): fetch the
+  newest dump from R2 (`rclone copy r2:pf-backups/pf_<TS>.dump.age .` or the
+  Cloudflare dashboard); decrypt with the private key from the password
+  manager: `age --decrypt -i key.txt -o pf.dump pf_<TS>.dump.age`; restore:
+  `pg_restore --clean --if-exists --no-owner -d "$DATABASE_URL" pf.dump`.
+  Restores everything including `transaction_overrides` (the un-refetchable
+  user edits). Worst case is losing only the deltas since the last nightly run,
+  and post-restore syncs re-pull those from Plaid (cursors are in the dump; §2
+  reprocess-never-skip applies). Known residual risk (accepted 2026-07-06): the
+  R2 token in Railway env can read+delete bucket objects (R2 has no write-only
+  tokens or versioning), so a full Railway env compromise could destroy backups
+  too; encryption still keeps them unreadable.
 
 ## Source of truth
 

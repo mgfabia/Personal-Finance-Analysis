@@ -30,6 +30,7 @@ from plaid.model.item_public_token_exchange_request import (
 )
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
+from plaid.model.link_token_transactions import LinkTokenTransactions
 from plaid.model.products import Products
 
 from .auth import require_auth
@@ -47,6 +48,12 @@ LINK_PRODUCTS = ["transactions"]
 
 CLIENT_NAME = "Personal Finance Analysis"
 COUNTRY_CODES = ["US"]
+
+# Plaid returns only 90 days of history by default; 730 is the maximum. Fixed at
+# Item creation (changing it later requires a re-link), so ask for everything up
+# front — this is also what makes "re-pull from Plaid" a usable disaster-recovery
+# floor for young data.
+TXN_DAYS_REQUESTED = 730
 
 
 def _plaid_error(exc: plaid.ApiException) -> HTTPException:
@@ -84,6 +91,7 @@ def create_link_token(
         products=[Products(p) for p in LINK_PRODUCTS],
         country_codes=[CountryCode(c) for c in COUNTRY_CODES],
         language="en",
+        transactions=LinkTokenTransactions(days_requested=TXN_DAYS_REQUESTED),
     )
     # Register the webhook so Plaid POSTs item/transaction updates (Phase 4).
     # Omitted in local dev (no public URL).
