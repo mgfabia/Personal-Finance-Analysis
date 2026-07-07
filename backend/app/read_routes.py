@@ -13,12 +13,9 @@ their shapes differ (pairs; a work queue).
 """
 
 from __future__ import annotations
-
 import datetime as dt
 import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Query
-
 from .auth import require_auth
 from .db import fetch_all
 
@@ -38,7 +35,7 @@ def list_accounts(user_id: str = Depends(require_auth)) -> dict:
     accounts/balances view). Institution name is read through the account's
     current_item_id (provenance, §3), ordered for a stable dropdown."""
     rows = fetch_all(
-        "SELECT a.id, a.name, a.official_name, a.mask, a.type, a.subtype, "
+        "SELECT a.id, a.name, a.display_name, a.official_name, a.mask, a.type, a.subtype, "
         "a.currency, a.current_balance, a.available_balance, i.institution_name "
         "FROM accounts a JOIN items i ON i.id = a.current_item_id "
         "WHERE a.user_id = %s "

@@ -154,6 +154,7 @@ export interface CategorySummary {
 export interface Account {
   id: string;
   name: string | null;
+  display_name: string | null;
   official_name: string | null;
   mask: string | null;
   type: string | null;
@@ -313,6 +314,13 @@ export function updateTag(tagId: string, patch: { name?: string; color?: string 
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+export function updateAccount(accountId: string, patch: { display_name: string | null }) {
+  return apiFetch<{ id: string; display_name: string | null; name: string | null }>(
+    `/api/accounts/${accountId}`,
+    { method: "PATCH", body: JSON.stringify(patch) },
+  );
 }
 
 export function deleteTag(tagId: string) {

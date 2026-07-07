@@ -11,6 +11,7 @@ import {
   RiListUnordered,
   RiLogoutBoxRLine,
   RiPriceTag3Line,
+  RiBankLine
 } from "@remixicon/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -48,6 +49,7 @@ export function useShell(): ShellState {
 
 const NAV = [
   { href: "/", label: "Overview", icon: RiBookletLine },
+  { href: "/accounts", label: "Accounts", icon: RiBankLine },
   { href: "/transactions", label: "Transactions", icon: RiListUnordered },
   { href: "/transfers", label: "Transfers", icon: RiArrowLeftRightLine },
   { href: "/review", label: "Review", icon: RiInboxLine },

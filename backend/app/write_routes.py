@@ -151,6 +151,31 @@ def update_tag(
     return {"id": str(row[0]), "name": row[1], "color": row[2]}
 
 
+@router.patch("/accounts/{account_id}")
+def update_account(
+    account_id: uuid.UUID, body: AccountPatch, user_id: str = Depends(require_auth)
+) -> dict:
+    """Set or clear the user's display name for an account (null/blank clears)."""
+    display_name = (body.display_name or "").strip() or None
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE accounts SET display_name = %s "
+                "WHERE id = %s AND user_id = %s "
+                "RETURNING id, display_name, name",
+                (display_name, account_id, user_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(404, "account not found")
+    return {"id": str(row[0]), "display_name": row[1], "name": row[2]}
+
+# ---------------------------------------------------------------------------
+# Accounts — user display name
+# ---------------------------------------------------------------------------
+class AccountPatch(BaseModel):
+    display_name: str | None = None
+
 @router.delete("/tags/{tag_id}")
 def delete_tag(tag_id: uuid.UUID, user_id: str = Depends(require_auth)) -> dict:
     """Deletes the tag and (via FK cascade) its transaction assignments."""
