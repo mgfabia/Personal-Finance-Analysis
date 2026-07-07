@@ -36,13 +36,18 @@ TXN_CLASSES = {
 def list_accounts(user_id: str = Depends(require_auth)) -> dict:
     """The user's accounts — drives the transactions account filter (and later an
     accounts/balances view). Institution name is read through the account's
-    current_item_id (provenance, §3), ordered for a stable dropdown."""
+    current_item_id (provenance, §3). ``effective_name`` is the one canonical
+    place the display-name fallback is computed for raw-account consumers (the
+    views do their own COALESCE); ordering follows it so the dropdown sorts by
+    what the user actually sees."""
     rows = fetch_all(
-        "SELECT a.id, a.name, a.official_name, a.mask, a.type, a.subtype, "
+        "SELECT a.id, a.name, a.display_name, "
+        "COALESCE(a.display_name, a.name) AS effective_name, "
+        "a.official_name, a.mask, a.type, a.subtype, "
         "a.currency, a.current_balance, a.available_balance, i.institution_name "
         "FROM accounts a JOIN items i ON i.id = a.current_item_id "
         "WHERE a.user_id = %s "
-        "ORDER BY a.type NULLS LAST, a.name NULLS LAST",
+        "ORDER BY a.type NULLS LAST, COALESCE(a.display_name, a.name) NULLS LAST",
         (user_id,),
     )
     return {"accounts": rows}
