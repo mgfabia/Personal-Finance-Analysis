@@ -1,4 +1,4 @@
-// Tremor-style Card — the surface every dashboard tile sits on.
+// Ledger panel — flat white paper with a hairline rule, no shadow.
 import React from "react";
 
 import { cx } from "../../lib/utils";
@@ -9,10 +9,7 @@ const Card = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cx(
-      "rounded-lg border border-gray-200 bg-white p-6 shadow-sm",
-      className,
-    )}
+    className={cx("rounded-sm border border-rule bg-panel p-5", className)}
     {...props}
   />
 ));

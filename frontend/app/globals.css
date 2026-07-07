@@ -3,7 +3,36 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ---------------------------------------------------------------------------
+   THE LEDGER — design tokens.
+   Paper-white surface, warm ink, hairline rules. Color is reserved for the
+   nine-class transaction taxonomy (lib/classes.ts); everything else is ink.
+   Money is always Geist Mono, tabular, right-aligned.
+--------------------------------------------------------------------------- */
 @theme {
+  /* Surfaces */
+  --color-paper: #faf9f6; /* page plane */
+  --color-panel: #ffffff; /* cards, tables */
+  --color-wash: #f2f0e9; /* hover / active wash */
+  --color-hilite: #fbf4dd; /* current-month ledger highlight */
+
+  /* Ink */
+  --color-ink: #1c1a15; /* primary */
+  --color-ink-2: #57534a; /* secondary */
+  --color-ink-3: #716d60; /* muted labels (>=4.5:1 on paper) */
+
+  /* Rules (hairlines) */
+  --color-rule: #e8e5db;
+  --color-rule-strong: #cdc8b8;
+
+  /* Ledger semantics */
+  --color-pos: #15803d; /* inflow figures */
+  --color-neg: #b42318; /* negative figures (parenthesized) */
+
+  /* Type */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+
   --animate-hide: hide 150ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-slide-down-and-fade: slideDownAndFade 150ms cubic-bezier(0.16, 1, 0.3, 1);
   --animate-slide-left-and-fade: slideLeftAndFade 150ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -32,17 +61,29 @@
   }
 }
 
-/* App base — light theme (matches the dashboard.tremor.so inspiration). */
+/* The Ledger commits to a single paper-light look. */
 html {
   color-scheme: light;
 }
 
 body {
-  @apply bg-gray-50 text-gray-900 antialiased;
+  @apply bg-paper text-ink antialiased;
 }
 
 /* Recharts: drop the default focus outline on chart surfaces. */
 .recharts-surface:focus,
 .recharts-wrapper:focus {
   outline: none;
+}
+
+/* Quality floor: honor reduced motion globally. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

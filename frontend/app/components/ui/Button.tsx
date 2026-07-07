@@ -1,6 +1,6 @@
 "use client";
 
-// Tremor-style Button — primary / secondary / ghost, with a loading state.
+// Ledger Button — primary (ink), secondary (paper + rule), ghost, danger.
 import React from "react";
 import { tv, type VariantProps } from "tailwind-variants";
 
@@ -8,21 +8,23 @@ import { cx, focusRing } from "../../lib/utils";
 
 const buttonVariants = tv({
   base: [
-    "relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md border px-3 py-2 text-sm font-medium transition-colors",
+    "relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm border px-3 py-1.5 text-sm font-medium transition-colors",
     "disabled:pointer-events-none disabled:opacity-50",
     ...focusRing,
   ],
   variants: {
     variant: {
-      primary:
-        "border-transparent bg-blue-500 text-white hover:bg-blue-600 active:bg-blue-700",
-      secondary:
-        "border-gray-300 bg-white text-gray-900 hover:bg-gray-50",
-      ghost:
-        "border-transparent bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+      primary: "border-transparent bg-ink text-paper hover:bg-ink/85 active:bg-ink",
+      secondary: "border-rule-strong bg-panel text-ink hover:bg-wash",
+      ghost: "border-transparent bg-transparent text-ink-2 hover:bg-wash hover:text-ink",
+      danger: "border-neg/40 bg-panel text-neg hover:bg-neg/5",
+    },
+    size: {
+      md: "",
+      sm: "px-2 py-1 text-xs",
     },
   },
-  defaultVariants: { variant: "primary" },
+  defaultVariants: { variant: "primary", size: "md" },
 });
 
 interface ButtonProps
@@ -32,10 +34,10 @@ interface ButtonProps
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, isLoading, disabled, children, ...props }, ref) => (
+  ({ className, variant, size, isLoading, disabled, children, ...props }, ref) => (
     <button
       ref={ref}
-      className={cx(buttonVariants({ variant }), className)}
+      className={cx(buttonVariants({ variant, size }), className)}
       disabled={disabled || isLoading}
       {...props}
     >

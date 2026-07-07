@@ -1,6 +1,6 @@
 "use client";
 
-// Add-a-bank via Plaid Link — Phase 8 (drives the Phase 2 endpoints).
+// Add-a-bank via Plaid Link — drives the Phase 2 endpoints.
 //
 // Flow (invariant 1 holds — the browser never sees the secret/access_token):
 //   1. POST /link/token/create → short-lived link_token
@@ -68,12 +68,12 @@ export default function LinkButton({ onLinked }: { onLinked: () => void }) {
   }
 
   return (
-    <div className="flex items-center gap-2">
-      {error && <span className="text-sm text-red-600">{error}</span>}
-      <Button onClick={start} isLoading={busy}>
-        {!busy && <RiAddLine className="size-4" />}
+    <div className="w-full">
+      <Button onClick={start} isLoading={busy} variant="secondary" className="w-full">
+        {!busy && <RiAddLine className="size-4" aria-hidden="true" />}
         Add bank
       </Button>
+      {error && <p className="mt-1.5 text-xs text-neg">{error}</p>}
     </div>
   );
 }

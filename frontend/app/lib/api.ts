@@ -1,11 +1,12 @@
-// API client — Phase 8. The browser's single channel to our backend.
+// API client — the browser's single channel to our backend.
 //
 // Security model (invariant 1): the browser talks only to our API and to Plaid
 // Link. It never sees the Plaid secret or any access_token, and never calls a
 // Plaid data endpoint. The session JWT (from /auth/login) is stored in
 // localStorage and attached as `Authorization: Bearer` on every call — acceptable
 // here because this is a private single-user app (see spec §Hand-rolled auth,
-// Part 5). All money fields arrive as strings (Postgres numeric → JSON).
+// Part 5). All money fields arrive as strings (Postgres numeric → JSON); Plaid
+// sign convention throughout: amount > 0 = money OUT, amount < 0 = money IN.
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "pfa_token";
@@ -28,7 +29,7 @@ export function isAuthenticated(): boolean {
   return getToken() !== null;
 }
 
-// Thrown on a 401 so callers (and the dashboard guard) can bounce to /login.
+// Thrown on a 401 so callers (and the app-shell guard) can bounce to /login.
 export class UnauthorizedError extends Error {}
 
 // --- core fetch -----------------------------------------------------------
@@ -73,33 +74,80 @@ export async function login(email: string, password: string): Promise<void> {
   setToken(data.access_token);
 }
 
-// --- types (mirror the 7a read API / views) -------------------------------
+// --- semantic taxonomy (0004) ----------------------------------------------
+export type TxnClass =
+  | "spending"
+  | "income"
+  | "refund"
+  | "internal_transfer"
+  | "saving_investing"
+  | "debt_payment"
+  | "cash"
+  | "p2p_unclassified"
+  | "transfer_unmatched";
+
+/** The 7 classes a user may rule; the two quarantine classes are never rulings. */
+export type RulableTxnClass = Exclude<TxnClass, "p2p_unclassified" | "transfer_unmatched">;
+
+export type TxnClassSource = "override" | "match" | "rule";
+export type PfcConfidence = "VERY_HIGH" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
+export type ReviewReason = "p2p" | "unmatched_transfer" | "low_confidence";
+export type TransferKind = "card_payment" | "to_investment" | "account_transfer";
+export type TransferSource = "auto" | "user";
+
+// --- types (mirror the read API / 0004 views) ------------------------------
 export interface Transaction {
   id: string;
+  account_id: string;
   account_name: string | null;
   account_mask: string | null;
   account_type: string | null;
   institution_name: string | null;
   date: string;
   datetime: string | null;
-  amount: string; // numeric as string; positive = outflow, negative = inflow
+  amount: string; // numeric as string; > 0 = outflow, < 0 = inflow
   currency: string | null;
-  name: string | null;
+  name: string | null; // effective: name_override > merchant_name > raw name
   merchant_name: string | null;
   payment_channel: string | null;
   pending: boolean;
-  category: string | null;
+  pfc_primary: string | null;
+  pfc_detailed: string | null;
+  pfc_confidence: PfcConfidence | null;
+  category: string | null; // effective: category_override > pfc_primary
   is_hidden: boolean;
   notes: string | null;
+  tag_ids: string[];
   tags: string[];
+  transfer_match_id: string | null;
+  transfer_corroborated: boolean | null;
+  counterpart_transaction_id: string | null;
+  counterpart_account_name: string | null;
+  txn_class: TxnClass;
+  txn_class_source: TxnClassSource;
 }
 
 export interface MonthlySummary {
-  month: string;
+  month: string; // YYYY-MM-DD (first of month)
   currency: string | null;
   income: string;
-  spending: string;
-  net: string;
+  spending: string; // nets refunds, includes cash withdrawals
+  debt_payments: string;
+  saving_investing: string;
+  p2p_out: string;
+  p2p_in: string;
+  unmatched_net: string;
+  net: string; // income - spending - debt_payments
+  unallocated: string; // net - saving_investing
+  needs_review_count: number;
+  txn_count: number;
+}
+
+export interface CategorySummary {
+  month: string;
+  category: string;
+  currency: string | null;
+  spending: string; // refunds net (negative rows offset)
   txn_count: number;
 }
 
@@ -116,37 +164,177 @@ export interface Account {
   institution_name: string | null;
 }
 
-// --- read endpoints -------------------------------------------------------
+export interface Transfer {
+  id: string;
+  source: TransferSource;
+  corroborated: boolean;
+  out_date: string;
+  in_date: string;
+  amount: string; // the outflow leg's amount (> 0)
+  outflow_transaction_id: string;
+  from_account: string | null;
+  inflow_transaction_id: string;
+  to_account: string | null;
+  kind: TransferKind;
+}
+
+export interface ReviewItem {
+  id: string;
+  date: string;
+  amount: string;
+  name: string | null;
+  account_name: string | null;
+  txn_class: TxnClass;
+  pfc_primary: string | null;
+  pfc_detailed: string | null;
+  pfc_confidence: PfcConfidence | null;
+  reason: ReviewReason;
+}
+
+export interface SavingsRateMonth {
+  month: string;
+  currency: string | null;
+  income: string;
+  spending: string;
+  debt_payments: string;
+  saving_investing: string;
+  net: string;
+  savings_rate_explicit: string | null; // fraction 0–1 as string; null if income <= 0
+  savings_rate_implied: string | null;
+}
+
+export interface Tag {
+  id: string;
+  name: string;
+  color: string | null; // hex
+  txn_count: number;
+}
+
+// --- read endpoints ---------------------------------------------------------
 export function getAccounts() {
   return apiFetch<{ accounts: Account[] }>("/api/accounts");
 }
 
-export function getTransactions(params: { limit?: number; offset?: number; accountId?: string } = {}) {
+export interface TransactionFilters {
+  limit?: number; // <= 500
+  offset?: number;
+  accountId?: string;
+  startDate?: string; // YYYY-MM-DD
+  endDate?: string;
+  txnClass?: TxnClass;
+  category?: string;
+  pending?: boolean;
+  tags?: string[]; // tag ids; OR semantics
+}
+
+export function getTransactions(params: TransactionFilters = {}) {
   const q = new URLSearchParams();
   if (params.limit != null) q.set("limit", String(params.limit));
   if (params.offset != null) q.set("offset", String(params.offset));
   if (params.accountId) q.set("account_id", params.accountId);
+  if (params.startDate) q.set("start_date", params.startDate);
+  if (params.endDate) q.set("end_date", params.endDate);
+  if (params.txnClass) q.set("txn_class", params.txnClass);
+  if (params.category) q.set("category", params.category);
+  if (params.pending != null) q.set("pending", String(params.pending));
+  for (const t of params.tags ?? []) q.append("tag", t);
   const qs = q.toString();
   return apiFetch<{ transactions: Transaction[]; limit: number; offset: number; count: number }>(
     `/api/transactions${qs ? `?${qs}` : ""}`,
   );
 }
 
-export function getMonthlySummary() {
-  return apiFetch<{ months: MonthlySummary[] }>("/api/summary/monthly");
+export function getMonthlySummary(params: { tags?: string[] } = {}) {
+  const q = new URLSearchParams();
+  for (const t of params.tags ?? []) q.append("tag", t);
+  const qs = q.toString();
+  return apiFetch<{ months: MonthlySummary[] }>(`/api/summary/monthly${qs ? `?${qs}` : ""}`);
 }
 
-export interface CategorySummary {
-  month: string;
-  category: string;
-  currency: string | null;
-  spending: string;
-  txn_count: number;
+export function getCategorySummary(params: { month?: string; tags?: string[] } = {}) {
+  const q = new URLSearchParams();
+  if (params.month) q.set("month", params.month);
+  for (const t of params.tags ?? []) q.append("tag", t);
+  const qs = q.toString();
+  return apiFetch<{ categories: CategorySummary[] }>(`/api/summary/category${qs ? `?${qs}` : ""}`);
 }
 
-export function getCategorySummary(params: { month?: string } = {}) {
-  const qs = params.month ? `?month=${encodeURIComponent(params.month)}` : "";
-  return apiFetch<{ categories: CategorySummary[] }>(`/api/summary/category${qs}`);
+export function getTransfers() {
+  return apiFetch<{ transfers: Transfer[] }>("/api/transfers");
+}
+
+export function getReview() {
+  return apiFetch<{ review: ReviewItem[]; count: number }>("/api/review");
+}
+
+export function getSavingsRate() {
+  return apiFetch<{ months: SavingsRateMonth[] }>("/api/savings-rate");
+}
+
+export function getTags() {
+  return apiFetch<{ tags: Tag[] }>("/api/tags");
+}
+
+// --- write endpoints ---------------------------------------------------------
+// Partial update: only keys PRESENT are written; an explicit null clears that
+// override. Build the object with exactly the keys you mean to touch —
+// undefined keys are dropped by JSON.stringify, which matches the contract.
+export interface OverrideBody {
+  category_override?: string | null;
+  name_override?: string | null;
+  notes?: string | null;
+  is_hidden?: boolean;
+  txn_class_override?: RulableTxnClass | null;
+}
+
+export function putOverride(txnId: string, body: OverrideBody) {
+  return apiFetch<{ transaction_id: string; updated: string[] }>(
+    `/api/transactions/${txnId}/override`,
+    { method: "PUT", body: JSON.stringify(body) },
+  );
+}
+
+export function setTransactionTags(txnId: string, tagIds: string[]) {
+  return apiFetch<{ transaction_id: string; tag_ids: string[] }>(
+    `/api/transactions/${txnId}/tags`,
+    { method: "PUT", body: JSON.stringify({ tag_ids: tagIds }) },
+  );
+}
+
+export function createTag(name: string, color?: string) {
+  return apiFetch<{ id: string; name: string; color: string | null }>("/api/tags", {
+    method: "POST",
+    body: JSON.stringify({ name, color }),
+  });
+}
+
+export function updateTag(tagId: string, patch: { name?: string; color?: string }) {
+  return apiFetch<{ id: string; name: string; color: string | null }>(`/api/tags/${tagId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteTag(tagId: string) {
+  return apiFetch<{ deleted: string }>(`/api/tags/${tagId}`, { method: "DELETE" });
+}
+
+export function createTransfer(outflowTransactionId: string, inflowTransactionId: string) {
+  return apiFetch<{ id: string; source: "user" }>("/api/transfers", {
+    method: "POST",
+    body: JSON.stringify({
+      outflow_transaction_id: outflowTransactionId,
+      inflow_transaction_id: inflowTransactionId,
+    }),
+  });
+}
+
+/** Unlink a pair. reject=true tombstones it so the matcher never re-proposes it. */
+export function deleteTransfer(matchId: string, reject: boolean) {
+  return apiFetch<{ deleted: string; rejected: boolean }>(
+    `/api/transfers/${matchId}?reject=${reject}`,
+    { method: "DELETE" },
+  );
 }
 
 // --- Plaid Link flow (Phase 2 endpoints) ----------------------------------
