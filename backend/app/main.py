@@ -23,6 +23,7 @@ from .logging_setup import configure_logging
 from .plaid_routes import router as plaid_router
 from .read_routes import router as read_router
 from .webhook_routes import router as webhook_router
+from .write_routes import router as write_router
 
 # Configure logging at import time. uvicorn applies its own log config *before*
 # importing this module, so doing it here reliably overrides it with our JSON
@@ -103,6 +104,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(read_router)
+app.include_router(write_router)
 app.include_router(plaid_router)
 app.include_router(webhook_router)
 

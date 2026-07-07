@@ -1,22 +1,35 @@
-"""Read API — Phase 7a. Auth-gated endpoints served from the SQL views.
+"""Read API — Phase 7a, extended by the transaction-semantics layer (0003/0004).
 
 Every endpoint depends on ``require_auth`` and filters ``WHERE user_id = %s`` with
 the user_id taken straight from the verified token — single-user today, but this
 is exactly what makes the data multi-user-safe for free (a token can only ever
-read rows tagged with its own ``sub``). Endpoints read from the ``v_*`` views
-(0002), never the raw tables.
+read rows tagged with its own ``sub``). Endpoints read from the ``v_*`` views and
+``fn_*`` summary functions, never the raw tables.
+
+Filter rule (design-notes/transaction-semantics/06): new endpoint per response
+*shape*, query params per *subset* of the same shape. ``/api/transactions``
+grows named filters; ``/api/transfers`` and ``/api/review`` are separate because
+their shapes differ (pairs; a work queue).
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .auth import require_auth
 from .db import fetch_all
 
 router = APIRouter(prefix="/api", tags=["read"])
+
+# The txn_class taxonomy (0004's CASE). Validated here so a typo'd filter is a
+# 422, not an silently-empty result.
+TXN_CLASSES = {
+    "spending", "income", "refund", "internal_transfer", "saving_investing",
+    "debt_payment", "cash", "p2p_unclassified", "transfer_unmatched",
+}
 
 
 @router.get("/accounts")
@@ -43,8 +56,16 @@ def list_transactions(
     account_id: str | None = Query(default=None),
     start_date: dt.date | None = Query(default=None),
     end_date: dt.date | None = Query(default=None),
+    txn_class: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    pending: bool | None = Query(default=None),
+    tag: list[uuid.UUID] | None = Query(default=None, description="Tag id; repeatable (OR semantics)"),
 ) -> dict:
-    """Paginated transaction feed (newest first), with optional account/date filters."""
+    """Paginated transaction feed (newest first). All filters compose (AND
+    across dimensions; OR within repeated tags)."""
+    if txn_class is not None and txn_class not in TXN_CLASSES:
+        raise HTTPException(422, f"unknown txn_class (expected one of {sorted(TXN_CLASSES)})")
+
     where = ["user_id = %s"]
     params: list = [user_id]
     if account_id:
@@ -56,6 +77,18 @@ def list_transactions(
     if end_date:
         where.append("date <= %s")
         params.append(end_date)
+    if txn_class:
+        where.append("txn_class = %s")
+        params.append(txn_class)
+    if category:
+        where.append("category = %s")
+        params.append(category)
+    if pending is not None:
+        where.append("pending = %s")
+        params.append(pending)
+    if tag:
+        where.append("tag_ids && %s::uuid[]")
+        params.append([str(t) for t in tag])
     clause = " AND ".join(where)
 
     rows = fetch_all(
@@ -68,11 +101,15 @@ def list_transactions(
 
 
 @router.get("/summary/monthly")
-def monthly_summary(user_id: str = Depends(require_auth)) -> dict:
-    """Income / spending / net per month, newest month first."""
+def monthly_summary(
+    user_id: str = Depends(require_auth),
+    tag: list[uuid.UUID] | None = Query(default=None, description="Tag id; repeatable (OR semantics)"),
+) -> dict:
+    """Classified cash flow per month (income / spending / debt / saving /
+    quarantined p2p), newest first. Optionally scoped to tagged transactions."""
     rows = fetch_all(
-        "SELECT * FROM v_monthly_summary WHERE user_id = %s ORDER BY month DESC",
-        (user_id,),
+        "SELECT * FROM fn_monthly_summary(%s, %s::uuid[]) ORDER BY month DESC",
+        (user_id, [str(t) for t in tag] if tag else None),
     )
     return {"months": rows}
 
@@ -83,18 +120,67 @@ def category_summary(
     month: dt.date | None = Query(
         default=None, description="First day of the month (YYYY-MM-01) to filter to"
     ),
+    tag: list[uuid.UUID] | None = Query(default=None, description="Tag id; repeatable (OR semantics)"),
 ) -> dict:
-    """Spending by category. Optionally scoped to a single month; largest first."""
-    where = ["user_id = %s"]
-    params: list = [user_id]
+    """Net spending by category (refunds offset their category). Optionally
+    scoped to a single month and/or tagged transactions; largest first."""
+    where = ""
+    params: list = [user_id, [str(t) for t in tag] if tag else None]
     if month:
-        where.append("month = %s")
+        where = "WHERE month = %s"
         params.append(month)
-    clause = " AND ".join(where)
 
     rows = fetch_all(
-        f"SELECT * FROM v_category_summary WHERE {clause} "
+        f"SELECT * FROM fn_category_summary(%s, %s::uuid[]) {where} "
         "ORDER BY month DESC, spending DESC",
         tuple(params),
     )
     return {"categories": rows}
+
+
+@router.get("/transfers")
+def list_transfers(user_id: str = Depends(require_auth)) -> dict:
+    """The pair ledger — one row per matched transfer (both legs), newest first."""
+    rows = fetch_all(
+        "SELECT * FROM v_transfers WHERE user_id = %s "
+        "ORDER BY out_date DESC, amount DESC",
+        (user_id,),
+    )
+    return {"transfers": rows}
+
+
+@router.get("/review")
+def review_queue(user_id: str = Depends(require_auth)) -> dict:
+    """The review inbox: p2p rows, unmatched transfers, and low-confidence
+    categories awaiting a user ruling. Biggest amounts first — resolve the
+    material ones first."""
+    rows = fetch_all(
+        "SELECT * FROM v_needs_review WHERE user_id = %s "
+        "ORDER BY abs(amount) DESC, date DESC",
+        (user_id,),
+    )
+    return {"review": rows, "count": len(rows)}
+
+
+@router.get("/savings-rate")
+def savings_rate(user_id: str = Depends(require_auth)) -> dict:
+    """Monthly savings rates: explicit (flows into savings/investments) and
+    implied (income simply not spent)."""
+    rows = fetch_all(
+        "SELECT * FROM v_savings_rate WHERE user_id = %s ORDER BY month DESC",
+        (user_id,),
+    )
+    return {"months": rows}
+
+
+@router.get("/tags")
+def list_tags(user_id: str = Depends(require_auth)) -> dict:
+    """The tag registry, with usage counts for the picker UI."""
+    rows = fetch_all(
+        "SELECT t.id, t.name, t.color, count(tt.transaction_id) AS txn_count "
+        "FROM tags t LEFT JOIN transaction_tags tt ON tt.tag_id = t.id "
+        "WHERE t.user_id = %s "
+        "GROUP BY t.id ORDER BY t.name",
+        (user_id,),
+    )
+    return {"tags": rows}

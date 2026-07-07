@@ -10,6 +10,7 @@ CLAUDE.md
 ARCHITECTURE.md
 BUILD-PLAN.md
 personal-finance-rebuild-architecture.md
+design-notes/
 
 # Secrets / env (never commit — Plaid secret, JWT_SECRET, DATABASE_URL, encryption key)
 .env

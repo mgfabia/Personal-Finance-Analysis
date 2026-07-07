@@ -31,11 +31,14 @@ from psycopg.types.json import Json
 
 import plaid
 from plaid.model.accounts_get_request import AccountsGetRequest
+from plaid.model.personal_finance_category_version import PersonalFinanceCategoryVersion
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
+from plaid.model.transactions_sync_request_options import TransactionsSyncRequestOptions
 
 from .config import get_settings
 from .crypto import decrypt_token
 from .db import connect
+from .derive import rebuild as rebuild_derived
 from .logging_setup import configure_logging
 from .plaid_client import get_plaid_client
 from .reconcile import reconcile_accounts
@@ -79,8 +82,19 @@ def _drain(client, access_token: str, cursor: str | None) -> tuple[list, list, l
     removed: list[dict] = []
     cur = cursor or ""
 
+    # PFC v2 taxonomy (superset of v1; existing customers are v1 unless opted
+    # in). Already-stored rows keep their codes until Plaid re-sends them — a
+    # cursor reset forces a full re-pull that recodes history in place.
+    options = TransactionsSyncRequestOptions(
+        personal_finance_category_version=PersonalFinanceCategoryVersion("v2"),
+    )
+
     while True:
-        kwargs: dict[str, Any] = {"access_token": access_token, "count": TXN_PAGE_SIZE}
+        kwargs: dict[str, Any] = {
+            "access_token": access_token,
+            "count": TXN_PAGE_SIZE,
+            "options": options,
+        }
         if cur:  # omit on the very first sync (no cursor yet)
             kwargs["cursor"] = cur
         resp = client.transactions_sync(TransactionsSyncRequest(**kwargs))
@@ -306,6 +320,14 @@ def sync_all_items() -> list[dict[str, Any]]:
                 "sync.item_failed",
                 extra={"item": item["plaid_item_id"], "status": "error"},
             )
+
+    # Derived state (transfer pairing) rebuilds after the syncs, never inside
+    # them — a matcher failure leaves pairs stale (self-healing next run), it
+    # must not fail the sync or block a cursor.
+    try:
+        rebuild_derived()
+    except Exception:
+        logger.exception("sync.derive_failed")
     return results
 
 

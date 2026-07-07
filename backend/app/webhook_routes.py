@@ -25,6 +25,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from .db import connect
+from .derive import rebuild as rebuild_derived
 from .sync import _record_error, fetch_item, run_sync
 from .webhooks import verify_webhook
 
@@ -55,6 +56,13 @@ def _run_sync_for_item(plaid_item_id: str) -> None:
         logger.exception(
             "webhook.sync_failed", extra={"item": plaid_item_id, "status": "error"}
         )
+        return
+    # Re-derive transfer pairing after a successful sync (same posture as the
+    # cron tail: stale-on-failure, never blocks the sync).
+    try:
+        rebuild_derived()
+    except Exception:
+        logger.exception("webhook.derive_failed", extra={"item": plaid_item_id})
 
 
 def _apply_item_webhook(webhook_code: str, plaid_item_id: str, payload: dict) -> None:
