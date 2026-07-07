@@ -155,6 +155,8 @@ export interface Account {
   id: string;
   name: string | null;
   display_name: string | null;
+  /** COALESCE(display_name, name) — the one server-computed fallback; use this for labels. */
+  effective_name: string | null;
   official_name: string | null;
   mask: string | null;
   type: string | null;

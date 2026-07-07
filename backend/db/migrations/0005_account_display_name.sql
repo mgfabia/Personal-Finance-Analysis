@@ -35,7 +35,7 @@ SELECT
     t.id,
     t.user_id,
     t.account_id,
-    COALESCE(a.display_name, a.name)               AS account_name,  -- CHANGED
+    COALESCE(a.display_name, a.name)               AS account_name,
     a.mask                                         AS account_mask,
     a.type                                         AS account_type,
     i.institution_name,
@@ -60,7 +60,7 @@ SELECT
     CASE WHEN ct.id IS NOT NULL THEN m.match_id END      AS transfer_match_id,
     CASE WHEN ct.id IS NOT NULL THEN m.corroborated END  AS transfer_corroborated,
     ct.id                                          AS counterpart_transaction_id,
-    COALESCE(ca.display_name, ca.name)             AS counterpart_account_name,  -- CHANGED
+    COALESCE(ca.display_name, ca.name)             AS counterpart_account_name,
     -- The classification. Precedence = CASE order, first match wins.
     CASE
         -- 1. user always wins
@@ -140,9 +140,9 @@ SELECT
     i.date   AS in_date,
     o.amount AS amount,
     o.id     AS outflow_transaction_id,
-    COALESCE(oa.display_name, oa.name)  AS from_account,  -- CHANGED
+    COALESCE(oa.display_name, oa.name)  AS from_account,
     i.id     AS inflow_transaction_id,
-    COALESCE(ia.display_name, ia.name)  AS to_account,    -- CHANGED
+    COALESCE(ia.display_name, ia.name)  AS to_account,
     CASE WHEN o.pfc_primary = 'LOAN_PAYMENTS' OR ia.type = 'credit'
              THEN 'card_payment'
          WHEN ia.type = 'investment'

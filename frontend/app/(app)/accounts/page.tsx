@@ -22,7 +22,7 @@ import { formatMoney } from "../../lib/format";
 import { cx, eyebrow, inputBase } from "../../lib/utils";
 
 function accountLabel(a: Account): string {
-  return a.display_name ?? a.name ?? "Account";
+  return a.effective_name ?? "Account";
 }
 
 function typeLine(a: Account): string {
@@ -83,7 +83,7 @@ export default function AccountsPage() {
     );
   }
 
-  // Group by institution, preserving the API's (type, name) ordering.
+  // Group by institution, preserving the API's (type, effective name) ordering.
   const groups = new Map<string, Account[]>();
   for (const a of accounts) {
     const key = a.institution_name ?? "Unknown institution";
@@ -129,11 +129,16 @@ export default function AccountsPage() {
                         size="sm"
                         isLoading={busy}
                         disabled={!editName.trim()}
-                        onClick={() =>
+                        onClick={() => {
+                          // Typing the bank's own name back = a reset, not a
+                          // stored no-op override.
+                          const value = editName.trim();
                           void run(() =>
-                            updateAccount(a.id, { display_name: editName.trim() }),
-                          )
-                        }
+                            updateAccount(a.id, {
+                              display_name: value === a.name ? null : value,
+                            }),
+                          );
+                        }}
                       >
                         Save
                       </Button>
@@ -150,7 +155,7 @@ export default function AccountsPage() {
                         </p>
                         <p className="truncate text-[11px] text-ink-2">
                           {typeLine(a)}
-                          {a.display_name && a.name && (
+                          {a.display_name && a.name && a.display_name !== a.name && (
                             <span> · Bank name: {a.name}</span>
                           )}
                         </p>
@@ -164,9 +169,10 @@ export default function AccountsPage() {
                         <Button
                           size="sm"
                           variant="ghost"
+                          disabled={busy}
                           onClick={() => {
                             setEditId(a.id);
-                            setEditName(a.display_name ?? a.name ?? "");
+                            setEditName(a.display_name ?? "");
                           }}
                         >
                           Rename

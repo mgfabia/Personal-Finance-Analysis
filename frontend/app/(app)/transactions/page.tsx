@@ -216,7 +216,7 @@ function TransactionsInner() {
           <option value="">All accounts</option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {(a.display_name ?? a.name ?? "Account") + (a.mask ? ` ··${a.mask}` : "")}
+              {(a.effective_name ?? "Account") + (a.mask ? ` ··${a.mask}` : "")}
             </option>
           ))}
         </Select>
