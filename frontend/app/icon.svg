@@ -1,0 +1,9 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="32" height="32" rx="7" fill="#1c1a17"/>
+  <!-- baseline -->
+  <line x1="7" y1="24" x2="25" y2="24" stroke="#54504a" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- ascending trend line -->
+  <polyline points="8,21 13,16 17,18 24,9" fill="none" stroke="#f4f1ea" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- peak marker -->
+  <circle cx="24" cy="9" r="2.4" fill="#1c1a17" stroke="#f4f1ea" stroke-width="2"/>
+</svg>
