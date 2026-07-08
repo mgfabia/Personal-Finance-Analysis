@@ -378,3 +378,8 @@ export function exchangePublicToken(publicToken: string) {
     { method: "POST", body: JSON.stringify({ public_token: publicToken }) },
   );
 }
+
+export function refreshTransactions() {
+  return apiFetch<{ refreshed: number; failed: string[]; cooldown_seconds: number }>(
+    "/api/transactions/refresh", { method: "POST" });
+}

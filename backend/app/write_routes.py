@@ -26,6 +26,14 @@ from .auth import require_auth
 from .db import connect
 from .derive import rebuild_transfer_matches
 
+import plaid
+from plaid.model.transactions_refresh_request import TransactionsRefreshRequest
+
+from .config import get_settings
+from .crypto import decrypt_token
+from .plaid_client import get_plaid_client
+from .plaid_routes import _plaid_error
+
 logger = logging.getLogger("app.write")
 
 router = APIRouter(prefix="/api", tags=["write"])
@@ -312,3 +320,66 @@ def delete_transfer(
         # Freed legs may pair elsewhere (or re-pair, if not rejected).
         rebuild_transfer_matches(conn)
     return {"deleted": str(match_id), "rejected": reject}
+
+
+@router.post("/transactions/refresh", status_code=202)
+def refresh_transactions(user_id: str = Depends(require_auth)) -> dict:
+    """Force Plaid to check every linked bank for new transactions (billed per
+    call). Async: Plaid later fires SYNC_UPDATES_AVAILABLE, which the webhook
+    path syncs. A cooldown caps cost."""
+    cooldown = get_settings().refresh_cooldown_seconds
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, access_token_encrypted, "
+                "  EXTRACT(EPOCH FROM (now() - max(last_manual_refresh_at) OVER ())) "
+                "FROM items "
+                "WHERE user_id = %s AND retired_at IS NULL "
+                "  AND access_token_encrypted IS NOT NULL",
+                (user_id,),
+            )
+            rows = cur.fetchall()
+
+    if not rows:
+        raise HTTPException(404, "no linked banks to refresh")
+
+    # `since` = seconds since the most recent manual refresh across ALL the
+    # user's items (the window function repeats the global max on every row).
+    since = rows[0][2]
+    if since is not None and since < cooldown:
+        raise HTTPException(
+            429,
+            detail={
+                "message": "Refreshed recently — try again shortly.",
+                "retry_after": int(cooldown - since),
+            },
+        )
+
+    client = get_plaid_client()
+    refreshed, failed = [], []
+    for item_id, enc_token, _ in rows:
+        try:
+            client.transactions_refresh(
+                TransactionsRefreshRequest(access_token=decrypt_token(enc_token))
+            )
+            refreshed.append(item_id)
+        except plaid.ApiException as exc:
+            failed.append(_plaid_error(exc).detail.get("error_code"))
+
+    # Stamp only the items that succeeded, in one write AFTER the Plaid I/O, so a
+    # fully-failed attempt (e.g. add-on off) doesn't lock the server cooldown.
+    if refreshed:
+        with connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE items SET last_manual_refresh_at = now() WHERE id = ANY(%s)",
+                    (refreshed,),
+                )
+
+    if not refreshed:
+        # Nothing succeeded — surface Plaid's reason (covers add-on-not-enabled).
+        raise HTTPException(502, detail={"source": "plaid", "failed": failed})
+
+    return {"refreshed": len(refreshed), "failed": failed, "cooldown_seconds": cooldown}
+
