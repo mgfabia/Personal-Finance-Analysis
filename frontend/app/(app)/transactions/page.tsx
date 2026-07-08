@@ -6,7 +6,7 @@
 // tags). Class chips carry the row's txn_class with its source mark; paired
 // legs show their counterpart account.
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { RiRefreshLine } from "@remixicon/react";
 
@@ -19,23 +19,25 @@ import { Select } from "../../components/ui/Select";
 import { TagChip } from "../../components/ui/TagChip";
 import { Toast } from "../../components/ui/Toast";
 import {
+  ApiError,
   getAccounts,
   getCategorySummary,
+  getSyncStatus,
   getTags,
   getTransactions,
   refreshTransactions,
   UnauthorizedError,
   type Account,
+  type SyncStatusItem,
   type Tag,
   type Transaction,
   type TxnClass,
 } from "../../lib/api";
 import { TXN_CLASS, TXN_CLASS_ORDER } from "../../lib/classes";
-import { formatDateShort, formatSignedAmount, isInflow } from "../../lib/format";
+import { formatDateShort, formatSignedAmount, formatTimeAgo, isInflow } from "../../lib/format";
 import { cx, eyebrow, focusRing, inputBase } from "../../lib/utils";
 
 const PAGE_SIZE = 100;
-const COOLDOWN_KEY = "pfa_refresh_cooldown_until";
 
 interface Filters {
   txnClass: TxnClass | "";
@@ -88,32 +90,34 @@ function TransactionsInner() {
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  // On-demand refresh: latest total count (for new-row detection), busy state,
-  // a transient toast, and a client cooldown mirroring the server's.
-  const countRef = useRef(0);
+  // On-demand refresh: busy state, a transient toast, the per-bank freshness
+  // read, and the server-owned cooldown mirrored as a local deadline (hydrated
+  // from /api/sync-status as remaining seconds — no client/server clock math,
+  // no localStorage).
   const [refreshing, setRefreshing] = useState(false);
   const [blip, setBlip] = useState<{ msg: string; tone: "info" | "error" }>({ msg: "", tone: "info" });
   const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [syncItems, setSyncItems] = useState<SyncStatusItem[]>([]);
 
-  // Hydrate the cooldown from localStorage (survives reload), and auto-clear it
-  // when the window elapses so the button re-enables without a manual re-render.
-  useEffect(() => {
-    const t = Number(localStorage.getItem(COOLDOWN_KEY) ?? 0);
-    if (t > Date.now()) setCooldownUntil(t);
-  }, []);
+  // Auto-clear the cooldown when the window elapses so the button re-enables
+  // without a manual re-render.
   useEffect(() => {
     if (cooldownUntil <= Date.now()) return;
     const id = window.setTimeout(() => setCooldownUntil(0), cooldownUntil - Date.now());
     return () => window.clearTimeout(id);
   }, [cooldownUntil]);
 
-  // Reference data (accounts, tag registry, known categories) — once per link.
+  // Reference data (accounts, tag registry, known categories, sync freshness)
+  // — once per link.
   useEffect(() => {
-    Promise.all([getAccounts(), getTags(), getCategorySummary()])
-      .then(([a, t, c]) => {
+    Promise.all([getAccounts(), getTags(), getCategorySummary(), getSyncStatus()])
+      .then(([a, t, c, s]) => {
         setAccounts(a.accounts);
         setAllTags(t.tags);
         setCategories([...new Set(c.categories.map((x) => x.category))].sort());
+        setSyncItems(s.items);
+        if (s.refresh_cooldown_remaining > 0)
+          setCooldownUntil(Date.now() + s.refresh_cooldown_remaining * 1000);
       })
       .catch((e) => {
         if (e instanceof UnauthorizedError) return router.replace("/login");
@@ -121,8 +125,8 @@ function TransactionsInner() {
       });
   }, [router, linkVersion]);
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
+  const load = useCallback(async () => {
+    setLoading(true);
     setError(null);
     try {
       const res = await getTransactions({
@@ -137,7 +141,6 @@ function TransactionsInner() {
         tags: filters.tags.length ? filters.tags : undefined,
       });
       setRows(res.transactions);
-      countRef.current = res.total;
     } catch (e) {
       if (e instanceof UnauthorizedError) return router.replace("/login");
       setError(e instanceof Error ? e.message : "Failed to load transactions.");
@@ -174,42 +177,49 @@ function TransactionsInner() {
     refreshReview(); // an override can clear rows from the review queue
   }, [load, refreshReview]);
 
-  // Force Plaid to check every bank now, then poll for the synced rows. The
-  // refresh is async (Plaid → SYNC_UPDATES_AVAILABLE webhook → run_sync), so we
-  // poll the read API for ~15s rather than expecting an immediate result.
+  // Oldest last-synced timestamp across the linked banks — the honest "data as
+  // of" figure (null while any bank has never synced, or before the read lands).
+  const dataAsOf = useMemo(() => {
+    if (syncItems.length === 0) return null;
+    const ts = syncItems.map((i) => i.last_synced_at);
+    if (ts.some((t) => t === null)) return null;
+    return ts.reduce((a, b) => (a! < b! ? a : b));
+  }, [syncItems]);
+
+  // Fire-and-forget: ask Plaid to re-poll every bank (billed per call, so the
+  // server enforces a cooldown). Results land later through the normal pipeline
+  // (SYNC_UPDATES_AVAILABLE webhook → run_sync; nightly cron as backstop) — no
+  // polling or "did it land" detection here by design.
   async function handleRefresh() {
     setRefreshing(true);
-    setBlip({ msg: "Polling your banks…", tone: "info" });
-    const baseline = countRef.current;
     try {
-      const { cooldown_seconds } = await refreshTransactions();
-      const until = Date.now() + cooldown_seconds * 1000;
-      setCooldownUntil(until);
-      localStorage.setItem(COOLDOWN_KEY, String(until));
-
-      let found = false;
-      for (let i = 0; i < 3; i++) {
-        await new Promise((r) => setTimeout(r, 5000));
-        await load({ silent: true });
-        if (countRef.current > baseline) {
-          found = true;
-          break;
-        }
+      const res = await refreshTransactions();
+      setCooldownUntil(Date.now() + res.cooldown_seconds * 1000);
+      if (res.requested === 0) {
+        const why = [...new Set(res.failed.map((f) => `${f.institution_name}: ${f.error_code}`))].join("; ");
+        setBlip({ msg: `Couldn't refresh — ${why}`, tone: "error" });
+      } else if (res.failed.length > 0) {
+        const who = [...new Set(res.failed.map((f) => f.institution_name))].join(", ");
+        setBlip({ msg: `Refresh requested (${who} failed) — new transactions usually appear within a few minutes.`, tone: "info" });
+      } else {
+        setBlip({ msg: "Refresh requested — new transactions usually appear within a few minutes.", tone: "info" });
       }
-      setBlip({
-        msg: found ? "New transactions added" : "Transactions up to date",
-        tone: "info",
-      });
-      refreshReview(); // new rows can enter the review queue
     } catch (e) {
       if (e instanceof UnauthorizedError) {
         router.replace("/login");
         return;
       }
-      setBlip({ msg: e instanceof Error ? e.message : "Refresh failed.", tone: "error" });
+      if (e instanceof ApiError && e.status === 429) {
+        // Honor the server's window (another device/tab may have refreshed).
+        const retry = (e.detail as { retry_after?: number } | null)?.retry_after;
+        if (retry) setCooldownUntil(Date.now() + retry * 1000);
+        setBlip({ msg: e.message, tone: "info" });
+      } else {
+        setBlip({ msg: e instanceof Error ? e.message : "Refresh failed.", tone: "error" });
+      }
     } finally {
       setRefreshing(false);
-      window.setTimeout(() => setBlip({ msg: "", tone: "info" }), 4000);
+      window.setTimeout(() => setBlip({ msg: "", tone: "info" }), 5000);
     }
   }
 
@@ -228,6 +238,7 @@ function TransactionsInner() {
               Clear {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
             </button>
           )}
+          {dataAsOf && <span className={eyebrow}>Data as of {formatTimeAgo(dataAsOf)}</span>}
           <Button
             size="sm"
             variant="secondary"

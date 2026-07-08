@@ -16,6 +16,7 @@ transaction via db.connect().
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -32,13 +33,17 @@ from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.link_token_transactions import LinkTokenTransactions
 from plaid.model.products import Products
+from plaid.model.transactions_refresh_request import TransactionsRefreshRequest
 
 from .auth import require_auth
 from .config import get_settings
-from .crypto import encrypt_token
-from .db import connect
+from .crypto import decrypt_token, encrypt_token
+from .db import connect, fetch_all
 from .plaid_client import get_plaid_client
 from .reconcile import reconcile_accounts
+from .sync import _plaid_error_detail
+
+logger = logging.getLogger("app.plaid")
 
 router = APIRouter(tags=["plaid"])
 
@@ -204,4 +209,94 @@ def exchange_public_token(
         "accounts_inserted": result["inserted"],
         "accounts_matched": result["matched"],
         "accounts": result["accounts"],
+    }
+
+
+@router.post("/api/transactions/refresh", status_code=202)
+def refresh_transactions(user_id: str = Depends(require_auth)) -> dict:
+    """Ask Plaid to re-poll every linked bank for new transactions (billed per
+    call). Fire-and-forget: results arrive later via SYNC_UPDATES_AVAILABLE →
+    the webhook sync path. A per-user cooldown, claimed atomically BEFORE any
+    Plaid I/O, caps cost — concurrent requests can't double-bill."""
+    cooldown = get_settings().refresh_cooldown_seconds
+
+    # Guards first, so a request that can't do anything doesn't burn a window.
+    items = fetch_all(
+        "SELECT id, plaid_item_id, institution_name, status, access_token_encrypted "
+        "FROM items "
+        "WHERE user_id = %s AND retired_at IS NULL "
+        "  AND access_token_encrypted IS NOT NULL",
+        (user_id,),
+    )
+    if not items:
+        raise HTTPException(404, "no linked banks to refresh")
+    # Refreshing a dead login is a guaranteed per-call charge that fails.
+    eligible = [i for i in items if i["status"] not in ("login_required", "revoked")]
+    skipped = len(items) - len(eligible)
+    if not eligible:
+        raise HTTPException(409, "all linked banks need to be reconnected first")
+
+    # Atomic claim: the guarded UPDATE either wins the window or nobody does —
+    # two concurrent requests can both pass the guards above, but only one gets
+    # a row back here. Accepted tradeoff: a fully-failed attempt still burns
+    # one window.
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET last_manual_refresh_at = now() "
+                "WHERE id = %s AND (last_manual_refresh_at IS NULL "
+                "  OR last_manual_refresh_at < now() - make_interval(secs => %s)) "
+                "RETURNING id",
+                (user_id, cooldown),
+            )
+            if cur.fetchone() is None:
+                cur.execute(
+                    "SELECT GREATEST(1, CEIL(EXTRACT(EPOCH FROM "
+                    "(last_manual_refresh_at + make_interval(secs => %s) - now()))))::int "
+                    "FROM users WHERE id = %s",
+                    (cooldown, user_id),
+                )
+                raise HTTPException(
+                    429,
+                    detail={
+                        "message": "Refreshed recently — try again shortly.",
+                        "retry_after": cur.fetchone()[0],
+                    },
+                )
+
+    client = get_plaid_client()
+    requested, failed = 0, []
+    for item in eligible:
+        # Broad except: one bad item (undecryptable token, transport error)
+        # must not abort the loop or 500 a request that already claimed the
+        # window and billed earlier items.
+        try:
+            client.transactions_refresh(
+                TransactionsRefreshRequest(
+                    access_token=decrypt_token(item["access_token_encrypted"])
+                )
+            )
+            requested += 1
+        except plaid.ApiException as exc:
+            code = _plaid_error_detail(exc).get("error_code") or "PLAID_ERROR"
+            failed.append(
+                {"institution_name": item["institution_name"] or "bank",
+                 "error_code": code}
+            )
+        except Exception:
+            logger.exception(
+                "refresh.item_failed", extra={"item": item["plaid_item_id"]}
+            )
+            failed.append(
+                {"institution_name": item["institution_name"] or "bank",
+                 "error_code": "INTERNAL_ERROR"}
+            )
+
+    # Always 202 once the window is claimed — the client reads `failed` for
+    # the real per-bank reasons (no speculative single-cause message here).
+    return {
+        "requested": requested,
+        "failed": failed,
+        "skipped": skipped,
+        "cooldown_seconds": cooldown,
     }
