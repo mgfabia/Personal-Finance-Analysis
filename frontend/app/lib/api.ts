@@ -49,7 +49,11 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     let detail = `request failed (${res.status})`;
     try {
       const body = await res.json();
-      if (body?.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      if (body?.detail)
+        detail =
+          typeof body.detail === "string"
+            ? body.detail
+            : (body.detail.error_message ?? body.detail.message ?? JSON.stringify(body.detail));
     } catch {
       /* non-JSON error body — keep the generic message */
     }
@@ -242,7 +246,7 @@ export function getTransactions(params: TransactionFilters = {}) {
   if (params.pending != null) q.set("pending", String(params.pending));
   for (const t of params.tags ?? []) q.append("tag", t);
   const qs = q.toString();
-  return apiFetch<{ transactions: Transaction[]; limit: number; offset: number; count: number }>(
+  return apiFetch<{ transactions: Transaction[]; limit: number; offset: number; count: number; total: number }>(
     `/api/transactions${qs ? `?${qs}` : ""}`,
   );
 }

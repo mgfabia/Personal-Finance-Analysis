@@ -102,7 +102,18 @@ def list_transactions(
         "LIMIT %s OFFSET %s",
         (*params, limit, offset),
     )
-    return {"transactions": rows, "limit": limit, "offset": offset, "count": len(rows)}
+    # `total` is the full matching count (not this page) so callers can detect
+    # newly-synced rows even when the page is capped at `limit`.
+    total = fetch_all(
+        f"SELECT COUNT(*) AS n FROM v_transactions WHERE {clause}", tuple(params)
+    )[0]["n"]
+    return {
+        "transactions": rows,
+        "limit": limit,
+        "offset": offset,
+        "count": len(rows),
+        "total": total,
+    }
 
 
 @router.get("/summary/monthly")

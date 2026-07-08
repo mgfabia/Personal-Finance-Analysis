@@ -137,7 +137,7 @@ function TransactionsInner() {
         tags: filters.tags.length ? filters.tags : undefined,
       });
       setRows(res.transactions);
-      countRef.current = res.count;
+      countRef.current = res.total;
     } catch (e) {
       if (e instanceof UnauthorizedError) return router.replace("/login");
       setError(e instanceof Error ? e.message : "Failed to load transactions.");

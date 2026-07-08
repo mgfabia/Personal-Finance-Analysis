@@ -379,7 +379,14 @@ def refresh_transactions(user_id: str = Depends(require_auth)) -> dict:
 
     if not refreshed:
         # Nothing succeeded — surface Plaid's reason (covers add-on-not-enabled).
-        raise HTTPException(502, detail={"source": "plaid", "failed": failed})
+        raise HTTPException(
+            502,
+            detail={
+                "source": "plaid",
+                "message": "Couldn't refresh with your bank(s). The Plaid refresh add-on may be disabled.",
+                "failed": failed,
+            },
+        )
 
     return {"refreshed": len(refreshed), "failed": failed, "cooldown_seconds": cooldown}
 
