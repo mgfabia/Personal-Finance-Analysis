@@ -6,7 +6,7 @@
 // tags). Class chips carry the row's txn_class with its source mark; paired
 // legs show their counterpart account.
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { RiRefreshLine } from "@remixicon/react";
 
@@ -91,9 +91,9 @@ function TransactionsInner() {
   const [openId, setOpenId] = useState<string | null>(null);
 
   // On-demand refresh: busy state, a transient toast, the per-bank freshness
-  // read, and the server-owned cooldown mirrored as a local deadline (hydrated
-  // from /api/sync-status as remaining seconds — no client/server clock math,
-  // no localStorage).
+  // read, and the server-owned cooldown mirrored as a local deadline. The one
+  // write path is hydrateSyncStatus — the server sends *remaining seconds*, so
+  // there's no client/server clock math and no localStorage.
   const [refreshing, setRefreshing] = useState(false);
   const [blip, setBlip] = useState<{ msg: string; tone: "info" | "error" }>({ msg: "", tone: "info" });
   const [cooldownUntil, setCooldownUntil] = useState(0);
@@ -107,17 +107,41 @@ function TransactionsInner() {
     return () => window.clearTimeout(id);
   }, [cooldownUntil]);
 
-  // Reference data (accounts, tag registry, known categories, sync freshness)
-  // — once per link.
+  // Transient toast; clearing the previous timer stops a stale one from wiping
+  // a newer message early.
+  const toastTimer = useRef(0);
+  const showBlip = useCallback((msg: string, tone: "info" | "error") => {
+    window.clearTimeout(toastTimer.current);
+    setBlip({ msg, tone });
+    toastTimer.current = window.setTimeout(() => setBlip({ msg: "", tone: "info" }), 5000);
+  }, []);
+
+  // The single cooldown/freshness write path: mount, after POST, after a 429.
+  const hydrateSyncStatus = useCallback(async () => {
+    try {
+      const s = await getSyncStatus();
+      setSyncItems(s.items);
+      setCooldownUntil(
+        s.refresh_cooldown_remaining > 0 ? Date.now() + s.refresh_cooldown_remaining * 1000 : 0,
+      );
+    } catch (e) {
+      if (e instanceof UnauthorizedError) router.replace("/login");
+      // Otherwise non-fatal: the freshness UI stays empty; filters and the
+      // table load regardless.
+    }
+  }, [router]);
+
   useEffect(() => {
-    Promise.all([getAccounts(), getTags(), getCategorySummary(), getSyncStatus()])
-      .then(([a, t, c, s]) => {
+    void hydrateSyncStatus();
+  }, [hydrateSyncStatus, linkVersion]);
+
+  // Reference data (accounts, tag registry, known categories) — once per link.
+  useEffect(() => {
+    Promise.all([getAccounts(), getTags(), getCategorySummary()])
+      .then(([a, t, c]) => {
         setAccounts(a.accounts);
         setAllTags(t.tags);
         setCategories([...new Set(c.categories.map((x) => x.category))].sort());
-        setSyncItems(s.items);
-        if (s.refresh_cooldown_remaining > 0)
-          setCooldownUntil(Date.now() + s.refresh_cooldown_remaining * 1000);
       })
       .catch((e) => {
         if (e instanceof UnauthorizedError) return router.replace("/login");
@@ -186,40 +210,38 @@ function TransactionsInner() {
     return ts.reduce((a, b) => (a! < b! ? a : b));
   }, [syncItems]);
 
+  // Banks whose login died — surfaced persistently (not as a toast) until the
+  // Phase 6 re-auth flow gives them a real reconnect path.
+  const needsReconnect = useMemo(
+    () => syncItems.filter((i) => i.status === "login_required" || i.status === "revoked"),
+    [syncItems],
+  );
+
   // Fire-and-forget: ask Plaid to re-poll every bank (billed per call, so the
-  // server enforces a cooldown). Results land later through the normal pipeline
-  // (SYNC_UPDATES_AVAILABLE webhook → run_sync; nightly cron as backstop) — no
-  // polling or "did it land" detection here by design.
+  // server enforces a cooldown). The server answers 202 before any Plaid I/O;
+  // results land later through the normal pipeline (SYNC_UPDATES_AVAILABLE
+  // webhook → run_sync; nightly cron as backstop). The cooldown state comes
+  // from re-reading /api/sync-status — success and 429 alike.
   async function handleRefresh() {
     setRefreshing(true);
     try {
-      const res = await refreshTransactions();
-      setCooldownUntil(Date.now() + res.cooldown_seconds * 1000);
-      if (res.requested === 0) {
-        const why = [...new Set(res.failed.map((f) => `${f.institution_name}: ${f.error_code}`))].join("; ");
-        setBlip({ msg: `Couldn't refresh — ${why}`, tone: "error" });
-      } else if (res.failed.length > 0) {
-        const who = [...new Set(res.failed.map((f) => f.institution_name))].join(", ");
-        setBlip({ msg: `Refresh requested (${who} failed) — new transactions usually appear within a few minutes.`, tone: "info" });
-      } else {
-        setBlip({ msg: "Refresh requested — new transactions usually appear within a few minutes.", tone: "info" });
-      }
+      await refreshTransactions();
+      showBlip("Refresh requested — new transactions usually appear within a few minutes.", "info");
+      void hydrateSyncStatus();
     } catch (e) {
       if (e instanceof UnauthorizedError) {
         router.replace("/login");
         return;
       }
       if (e instanceof ApiError && e.status === 429) {
-        // Honor the server's window (another device/tab may have refreshed).
-        const retry = (e.detail as { retry_after?: number } | null)?.retry_after;
-        if (retry) setCooldownUntil(Date.now() + retry * 1000);
-        setBlip({ msg: e.message, tone: "info" });
+        // Another device/tab holds the window — adopt the server's view of it.
+        showBlip(e.message, "info");
+        void hydrateSyncStatus();
       } else {
-        setBlip({ msg: e instanceof Error ? e.message : "Refresh failed.", tone: "error" });
+        showBlip(e instanceof Error ? e.message : "Refresh failed.", "error");
       }
     } finally {
       setRefreshing(false);
-      window.setTimeout(() => setBlip({ msg: "", tone: "info" }), 5000);
     }
   }
 
@@ -237,6 +259,12 @@ function TransactionsInner() {
             >
               Clear {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
             </button>
+          )}
+          {needsReconnect.length > 0 && (
+            <span className={cx(eyebrow, "text-neg")}>
+              {needsReconnect.map((i) => i.institution_name ?? "a bank").join(", ")}{" "}
+              need{needsReconnect.length === 1 ? "s" : ""} reconnecting
+            </span>
           )}
           {dataAsOf && <span className={eyebrow}>Data as of {formatTimeAgo(dataAsOf)}</span>}
           <Button

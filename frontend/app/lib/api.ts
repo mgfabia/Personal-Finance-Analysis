@@ -65,10 +65,18 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
       const body = await res.json();
       if (body?.detail) {
         detail = body.detail;
-        message =
-          typeof body.detail === "string"
-            ? body.detail
-            : (body.detail.error_message ?? body.detail.message ?? JSON.stringify(body.detail));
+        if (typeof body.detail === "string") {
+          message = body.detail;
+        } else {
+          // Keep the error_code visible — it's often the only actionable part
+          // of a Plaid failure (e.g. INVALID_API_KEYS).
+          const text = body.detail.error_message ?? body.detail.message;
+          message = text
+            ? body.detail.error_code
+              ? `${text} (${body.detail.error_code})`
+              : text
+            : JSON.stringify(body.detail);
+        }
       }
     } catch {
       /* non-JSON error body — keep the generic message */
@@ -412,17 +420,12 @@ export function getSyncStatus() {
   return apiFetch<{
     items: SyncStatusItem[];
     refresh_cooldown_remaining: number; // seconds; > 0 while the cooldown is live
-    cooldown_seconds: number;
   }>("/api/sync-status");
 }
 
-/** Fire-and-forget: asks Plaid to re-poll each bank (billed per call); results
- * land later via webhook → sync. 429 (ApiError) carries detail.retry_after. */
+/** Fire-and-forget: asks Plaid to re-poll each bank (billed per call). The
+ * server answers a bare 202 and runs the Plaid calls in the background;
+ * results land later via webhook → sync. Callers re-read /api/sync-status. */
 export function refreshTransactions() {
-  return apiFetch<{
-    requested: number;
-    failed: { institution_name: string; error_code: string }[];
-    skipped: number;
-    cooldown_seconds: number;
-  }>("/api/transactions/refresh", { method: "POST" });
+  return apiFetch<{ status: string }>("/api/transactions/refresh", { method: "POST" });
 }

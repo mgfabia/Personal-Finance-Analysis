@@ -103,12 +103,13 @@ export function dayDiff(a: string, b: string): number {
   return Math.round(ms / 86_400_000);
 }
 
-/** Relative time for an ISO timestamp (server timestamptz) — "3 hours ago". */
+/** Relative time for an ISO timestamp (server timestamptz) — "3 hours ago".
+ * Clamped to the past: client clock skew must never render "in 10 minutes". */
 export function formatTimeAgo(iso: string): string {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return iso;
   const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
-  const sec = Math.round((ms - Date.now()) / 1000);
+  const sec = Math.min(0, Math.round((ms - Date.now()) / 1000));
   const abs = Math.abs(sec);
   if (abs < 60) return "just now";
   if (abs < 3600) return rtf.format(Math.trunc(sec / 60), "minute");
