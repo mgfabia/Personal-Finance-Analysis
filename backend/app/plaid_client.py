@@ -10,7 +10,9 @@ only at the Phase 9 cutover. (The SDK dropped the old ``development`` host.)
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from typing import Any
 
 import plaid
 from plaid.api import plaid_api
@@ -49,3 +51,15 @@ def get_plaid_client() -> plaid_api.PlaidApi:
         },
     )
     return plaid_api.PlaidApi(plaid.ApiClient(configuration))
+
+
+def plaid_error_detail(exc: plaid.ApiException) -> dict[str, Any]:
+    """Parse a Plaid ApiException body into {error_code, error_message}."""
+    try:
+        body = json.loads(exc.body)
+        return {
+            "error_code": body.get("error_code"),
+            "error_message": body.get("error_message"),
+        }
+    except (ValueError, TypeError, AttributeError):
+        return {"error_code": None, "error_message": str(exc)}

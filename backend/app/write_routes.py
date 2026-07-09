@@ -312,4 +312,3 @@ def delete_transfer(
         # Freed legs may pair elsewhere (or re-pair, if not rejected).
         rebuild_transfer_matches(conn)
     return {"deleted": str(match_id), "rejected": reject}
-

@@ -20,8 +20,9 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .auth import require_auth
-from .config import get_settings
 from .db import fetch_all
+from .sync import LIVE_ITEM_PREDICATE
+from .users import refresh_cooldown_remaining
 
 router = APIRouter(prefix="/api", tags=["read"])
 
@@ -59,26 +60,17 @@ def sync_status(user_id: str = Depends(require_auth)) -> dict:
     """Per-bank freshness (last_synced_at is written by every successful sync)
     plus the manual-refresh cooldown, server-computed as *remaining seconds* so
     the client never does clock math against server timestamps. Drives the
-    transactions page's "Data as of" line and the Refresh button's grey-out."""
-    cooldown = get_settings().refresh_cooldown_seconds
+    transactions page's "Data as of" line, the needs-reconnecting notice, and
+    the Refresh button's grey-out."""
     items = fetch_all(
         "SELECT id, institution_name, status, last_synced_at, last_error "
-        "FROM items "
-        "WHERE user_id = %s AND retired_at IS NULL "
-        "  AND access_token_encrypted IS NOT NULL "
+        f"FROM items WHERE user_id = %s AND {LIVE_ITEM_PREDICATE} "
         "ORDER BY institution_name NULLS LAST",
         (user_id,),
     )
-    row = fetch_all(
-        "SELECT COALESCE(GREATEST(0, CEIL(EXTRACT(EPOCH FROM "
-        "(last_manual_refresh_at + make_interval(secs => %s) - now()))))::int, 0) "
-        "AS remaining FROM users WHERE id = %s",
-        (cooldown, user_id),
-    )
     return {
         "items": items,
-        "refresh_cooldown_remaining": row[0]["remaining"] if row else 0,
-        "cooldown_seconds": cooldown,
+        "refresh_cooldown_remaining": refresh_cooldown_remaining(user_id),
     }
 
 

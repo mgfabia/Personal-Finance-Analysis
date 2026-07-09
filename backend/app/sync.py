@@ -40,7 +40,7 @@ from .crypto import decrypt_token
 from .db import connect
 from .derive import rebuild as rebuild_derived
 from .logging_setup import configure_logging
-from .plaid_client import get_plaid_client
+from .plaid_client import get_plaid_client, plaid_error_detail
 from .reconcile import reconcile_accounts
 
 logger = logging.getLogger("app.sync")
@@ -53,22 +53,14 @@ _ITEM_COLUMNS = (
     "plaid_institution_id",
 )
 
+# The one definition of a "live" item: not retired and still holding a token.
+# Interpolated (not parameterized) into SQL — a constant, never user input.
+LIVE_ITEM_PREDICATE = "retired_at IS NULL AND access_token_encrypted IS NOT NULL"
+
 
 def _raw(obj: Any) -> Json:
     """Wrap a Plaid payload for jsonb storage, tolerating datetime/date values."""
     return Json(obj, dumps=lambda o: json.dumps(o, default=str))
-
-
-def _plaid_error_detail(exc: plaid.ApiException) -> dict[str, Any]:
-    """Parse a Plaid ApiException body into {error_code, error_message}."""
-    try:
-        body = json.loads(exc.body)
-        return {
-            "error_code": body.get("error_code"),
-            "error_message": body.get("error_message"),
-        }
-    except (ValueError, TypeError, AttributeError):
-        return {"error_code": None, "error_message": str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +191,7 @@ def run_sync(item: dict[str, Any]) -> dict[str, Any]:
                     client, access_token, item["transactions_cursor"]
                 )
             except plaid.ApiException as exc:
-                detail = _plaid_error_detail(exc)
+                detail = plaid_error_detail(exc)
                 # Sync-failure safety net (§Item health): a sync that hits
                 # ITEM_LOGIN_REQUIRED flips status and stops — the backstop for a
                 # missed ITEM webhook. Cursor untouched, so nothing is skipped.
@@ -274,7 +266,7 @@ def fetch_item(plaid_item_id: str) -> dict[str, Any] | None:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items "
-                "WHERE plaid_item_id = %s AND retired_at IS NULL",
+                f"WHERE plaid_item_id = %s AND {LIVE_ITEM_PREDICATE}",
                 (plaid_item_id,),
             )
             row = cur.fetchone()
@@ -284,7 +276,7 @@ def fetch_item(plaid_item_id: str) -> dict[str, Any] | None:
 def _record_error(item: dict[str, Any], exc: Exception) -> None:
     """Persist a sync failure to items.last_error (cursor stays put → reprocess)."""
     detail: dict[str, Any] = (
-        _plaid_error_detail(exc)
+        plaid_error_detail(exc)
         if isinstance(exc, plaid.ApiException)
         else {"error_code": None, "error_message": str(exc)}
     )
@@ -302,7 +294,7 @@ def sync_all_items() -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items "
-                "WHERE retired_at IS NULL AND access_token_encrypted IS NOT NULL"
+                f"WHERE {LIVE_ITEM_PREDICATE}"
             )
             items = [dict(zip(_ITEM_COLUMNS, row)) for row in cur.fetchall()]
 

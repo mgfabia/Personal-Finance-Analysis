@@ -15,10 +15,9 @@ transaction via db.connect().
 
 from __future__ import annotations
 
-import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 import plaid
@@ -39,9 +38,10 @@ from .auth import require_auth
 from .config import get_settings
 from .crypto import decrypt_token, encrypt_token
 from .db import connect, fetch_all
-from .plaid_client import get_plaid_client
+from .plaid_client import get_plaid_client, plaid_error_detail
 from .reconcile import reconcile_accounts
-from .sync import _plaid_error_detail
+from .sync import LIVE_ITEM_PREDICATE
+from .users import refresh_cooldown_remaining
 
 logger = logging.getLogger("app.plaid")
 
@@ -63,19 +63,13 @@ TXN_DAYS_REQUESTED = 730
 
 def _plaid_error(exc: plaid.ApiException) -> HTTPException:
     """Translate a Plaid ApiException into a 502 carrying Plaid's error fields."""
-    code = message = None
-    try:
-        body = json.loads(exc.body)
-        code = body.get("error_code")
-        message = body.get("error_message")
-    except (ValueError, TypeError, AttributeError):
-        pass
+    detail = plaid_error_detail(exc)
     return HTTPException(
         status_code=502,
         detail={
             "source": "plaid",
-            "error_code": code,
-            "error_message": message or "Plaid request failed",
+            "error_code": detail["error_code"],
+            "error_message": detail["error_message"] or "Plaid request failed",
         },
     )
 
@@ -212,34 +206,65 @@ def exchange_public_token(
     }
 
 
+def _request_refreshes(items: list[dict]) -> None:
+    """Background task: ask Plaid to re-poll each bank. Per-item failures are
+    logged and swallowed — the 202 already went out; results only ever arrive
+    via SYNC_UPDATES_AVAILABLE → the webhook sync path."""
+    client = get_plaid_client()
+    for item in items:
+        try:
+            client.transactions_refresh(
+                TransactionsRefreshRequest(
+                    access_token=decrypt_token(item["access_token_encrypted"])
+                )
+            )
+            logger.info("refresh.requested", extra={"item": item["plaid_item_id"]})
+        except plaid.ApiException as exc:
+            logger.error(
+                "refresh.item_failed",
+                extra={
+                    "item": item["plaid_item_id"],
+                    "error_code": plaid_error_detail(exc).get("error_code"),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "refresh.item_failed", extra={"item": item["plaid_item_id"]}
+            )
+
+
 @router.post("/api/transactions/refresh", status_code=202)
-def refresh_transactions(user_id: str = Depends(require_auth)) -> dict:
+def refresh_transactions(
+    background: BackgroundTasks,
+    user_id: str = Depends(require_auth),
+) -> dict:
     """Ask Plaid to re-poll every linked bank for new transactions (billed per
-    call). Fire-and-forget: results arrive later via SYNC_UPDATES_AVAILABLE →
-    the webhook sync path. A per-user cooldown, claimed atomically BEFORE any
-    Plaid I/O, caps cost — concurrent requests can't double-bill."""
+    call). Fire-and-forget: guards and the atomic cooldown claim run inline;
+    the Plaid calls run after the response as a background task, and results
+    arrive later via SYNC_UPDATES_AVAILABLE → the webhook sync path. The
+    per-user cooldown, claimed atomically BEFORE any Plaid I/O, caps cost —
+    concurrent requests can't double-bill. Clients re-read /api/sync-status
+    for the cooldown and per-bank freshness."""
     cooldown = get_settings().refresh_cooldown_seconds
 
     # Guards first, so a request that can't do anything doesn't burn a window.
     items = fetch_all(
-        "SELECT id, plaid_item_id, institution_name, status, access_token_encrypted "
-        "FROM items "
-        "WHERE user_id = %s AND retired_at IS NULL "
-        "  AND access_token_encrypted IS NOT NULL",
+        "SELECT plaid_item_id, status, access_token_encrypted FROM items "
+        f"WHERE user_id = %s AND {LIVE_ITEM_PREDICATE}",
         (user_id,),
     )
     if not items:
         raise HTTPException(404, "no linked banks to refresh")
     # Refreshing a dead login is a guaranteed per-call charge that fails.
     eligible = [i for i in items if i["status"] not in ("login_required", "revoked")]
-    skipped = len(items) - len(eligible)
     if not eligible:
         raise HTTPException(409, "all linked banks need to be reconnected first")
 
     # Atomic claim: the guarded UPDATE either wins the window or nobody does —
     # two concurrent requests can both pass the guards above, but only one gets
-    # a row back here. Accepted tradeoff: a fully-failed attempt still burns
-    # one window.
+    # a row back here. Accepted tradeoff: a fully-failed background run still
+    # burns one window. The 429 is raised OUTSIDE the connect() block because
+    # the remaining-helper opens its own connection.
     with connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -249,54 +274,15 @@ def refresh_transactions(user_id: str = Depends(require_auth)) -> dict:
                 "RETURNING id",
                 (user_id, cooldown),
             )
-            if cur.fetchone() is None:
-                cur.execute(
-                    "SELECT GREATEST(1, CEIL(EXTRACT(EPOCH FROM "
-                    "(last_manual_refresh_at + make_interval(secs => %s) - now()))))::int "
-                    "FROM users WHERE id = %s",
-                    (cooldown, user_id),
-                )
-                raise HTTPException(
-                    429,
-                    detail={
-                        "message": "Refreshed recently — try again shortly.",
-                        "retry_after": cur.fetchone()[0],
-                    },
-                )
+            claimed = cur.fetchone() is not None
+    if not claimed:
+        raise HTTPException(
+            429,
+            detail={
+                "message": "Refreshed recently — try again shortly.",
+                "retry_after": max(1, refresh_cooldown_remaining(user_id)),
+            },
+        )
 
-    client = get_plaid_client()
-    requested, failed = 0, []
-    for item in eligible:
-        # Broad except: one bad item (undecryptable token, transport error)
-        # must not abort the loop or 500 a request that already claimed the
-        # window and billed earlier items.
-        try:
-            client.transactions_refresh(
-                TransactionsRefreshRequest(
-                    access_token=decrypt_token(item["access_token_encrypted"])
-                )
-            )
-            requested += 1
-        except plaid.ApiException as exc:
-            code = _plaid_error_detail(exc).get("error_code") or "PLAID_ERROR"
-            failed.append(
-                {"institution_name": item["institution_name"] or "bank",
-                 "error_code": code}
-            )
-        except Exception:
-            logger.exception(
-                "refresh.item_failed", extra={"item": item["plaid_item_id"]}
-            )
-            failed.append(
-                {"institution_name": item["institution_name"] or "bank",
-                 "error_code": "INTERNAL_ERROR"}
-            )
-
-    # Always 202 once the window is claimed — the client reads `failed` for
-    # the real per-bank reasons (no speculative single-cause message here).
-    return {
-        "requested": requested,
-        "failed": failed,
-        "skipped": skipped,
-        "cooldown_seconds": cooldown,
-    }
+    background.add_task(_request_refreshes, eligible)
+    return {"status": "accepted"}
