@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Life of a Transaction — System Diagram</title>
+<style>
+  :root {
+    --paper: #FBF8F1;
+    --panel: #F3EEE1;
+    --ink: #211D16;
+    --ink-2: #7A7264;
+    --rule: #DCD5C3;
+    --rule-strong: #B9B09A;
+    --c-link: #35598F;
+    --c-sync: #3E7A50;
+    --c-refresh: #B24E22;
+    --c-read: #857C6B;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #151310;
+      --panel: #201C15;
+      --ink: #EDE7D9;
+      --ink-2: #9C9482;
+      --rule: #383325;
+      --rule-strong: #57503C;
+      --c-link: #8FB0E8;
+      --c-sync: #86C494;
+      --c-refresh: #E5915C;
+      --c-read: #A39A87;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151310;
+    --panel: #201C15;
+    --ink: #EDE7D9;
+    --ink-2: #9C9482;
+    --rule: #383325;
+    --rule-strong: #57503C;
+    --c-link: #8FB0E8;
+    --c-sync: #86C494;
+    --c-refresh: #E5915C;
+    --c-read: #A39A87;
+  }
+  :root[data-theme="light"] {
+    --paper: #FBF8F1;
+    --panel: #F3EEE1;
+    --ink: #211D16;
+    --ink-2: #7A7264;
+    --rule: #DCD5C3;
+    --rule-strong: #B9B09A;
+    --c-link: #35598F;
+    --c-sync: #3E7A50;
+    --c-refresh: #B24E22;
+    --c-read: #857C6B;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
+
+  .page { max-width: 1060px; margin: 0 auto; padding: 40px 24px 56px; }
+
+  header.masthead {
+    display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+    gap: 16px 32px;
+    border-bottom: 1px solid var(--rule-strong);
+    padding-bottom: 18px;
+  }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 10px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-2); margin: 0 0 10px;
+  }
+  h1 {
+    font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    font-size: 21px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase;
+    margin: 0 0 8px; text-wrap: balance;
+  }
+  .dek { font-size: 13.5px; color: var(--ink-2); margin: 0; max-width: 56ch; line-height: 1.55; }
+
+  .legend { display: flex; flex-direction: column; gap: 7px; padding-bottom: 2px; }
+  .chip { display: flex; align-items: center; gap: 9px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); white-space: nowrap; }
+  .chip .swatch { width: 22px; height: 0; border-top: 2px solid; position: relative; }
+  .chip .swatch::after { content: ""; position: absolute; right: -1px; top: -4px; border-left: 6px solid; border-top: 3px solid transparent; border-bottom: 3px solid transparent; border-left-color: inherit; }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .sw-link  { color: var(--c-link);  border-color: var(--c-link); }
+  .sw-sync  { color: var(--c-sync);  border-color: var(--c-sync); }
+  .sw-refresh { color: var(--c-refresh); border-color: var(--c-refresh); }
+  .sw-read  { color: var(--c-read);  border-color: var(--c-read); }
+
+  .diagram-scroll { overflow-x: auto; margin-top: 8px; }
+  svg.seq { display: block; width: 100%; min-width: 920px; height: auto; }
+
+  /* --- SVG styling (all through tokens) --- */
+  .lifeline { stroke: var(--rule); stroke-width: 1; stroke-dasharray: 1 5; stroke-linecap: round; }
+  .nodebox  { fill: var(--panel); stroke: var(--rule-strong); stroke-width: 1; }
+  .nodetitle { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; font-weight: 600; letter-spacing: 0.11em; fill: var(--ink); text-anchor: middle; }
+  .nodesub   { font-family: system-ui, sans-serif; font-size: 10.5px; fill: var(--ink-2); text-anchor: middle; }
+  .lanefoot  { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 9.5px; letter-spacing: 0.12em; fill: var(--ink-2); text-anchor: middle; }
+
+  .chap-rule { stroke: var(--rule); stroke-width: 1; }
+  .chap { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.15em; }
+  .chap tspan.range { fill: var(--ink-2); font-weight: 500; }
+
+  .halo { paint-order: stroke; stroke: var(--paper); stroke-width: 6px; stroke-linejoin: round; }
+  .lbl { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; font-weight: 600; text-anchor: middle; }
+  .cap { font-family: system-ui, sans-serif; font-size: 10.5px; fill: var(--ink-2); text-anchor: middle; }
+
+  .a { stroke-width: 1.5; fill: none; }
+  .a.dashed { stroke-dasharray: 4 4; }
+  .st-link { stroke: var(--c-link); }    .tx-link { fill: var(--c-link); }
+  .st-sync { stroke: var(--c-sync); }    .tx-sync { fill: var(--c-sync); }
+  .st-refresh { stroke: var(--c-refresh); } .tx-refresh { fill: var(--c-refresh); }
+  .st-read { stroke: var(--c-read); }    .tx-read { fill: var(--c-read); }
+
+  .badge-c { fill: var(--paper); stroke-width: 1.2; }
+  .badge-t { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 9.5px; font-weight: 600; text-anchor: middle; }
+  .note { font-family: system-ui, sans-serif; font-size: 11px; font-style: italic; fill: var(--ink-2); text-anchor: middle; }
+
+  /* --- invariants footer --- */
+  .invariants {
+    margin-top: 34px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px;
+  }
+  .invariants section { border-top: 1px solid var(--rule-strong); padding-top: 12px; }
+  .invariants h2 {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
+    margin: 0 0 7px; color: var(--ink);
+  }
+  .invariants p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
+  .invariants p code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px; color: var(--ink); }
+
+  footer.colophon {
+    margin-top: 36px; border-top: 1px solid var(--rule); padding-top: 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2);
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 720px) {
+    .invariants { grid-template-columns: 1fr; gap: 18px; }
+    .page { padding: 28px 16px 40px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Personal Finance Analysis · System Diagram</p>
+      <h1>The Life of a Transaction</h1>
+      <p class="dek">Four services, one story — how a purchase at your bank becomes a row in the ledger. Step numbers follow the sequence; each color is one arc of the story.</p>
+    </div>
+    <div class="legend" aria-label="Legend">
+      <span class="chip"><span class="swatch sw-link"></span><b>1–6</b> link a bank · once</span>
+      <span class="chip"><span class="swatch sw-sync"></span><b>7–11</b> sync · continuous</span>
+      <span class="chip"><span class="swatch sw-refresh"></span><b>12–15</b> refresh · on demand</span>
+      <span class="chip"><span class="swatch sw-read"></span><b>16–17</b> read · the ledger</span>
+    </div>
+  </header>
+
+  <div class="diagram-scroll">
+  <svg class="seq" viewBox="0 0 980 1190" role="img" aria-label="Sequence diagram: frontend, backend, database and Plaid API exchanging messages to link a bank, sync transactions, refresh on demand, and read the ledger.">
+    <defs>
+      <marker id="mk-link" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0.5 L8,4 L0,7.5 Z" class="tx-link"/>
+      </marker>
+      <marker id="mk-sync" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0.5 L8,4 L0,7.5 Z" class="tx-sync"/>
+      </marker>
+      <marker id="mk-refresh" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0.5 L8,4 L0,7.5 Z" class="tx-refresh"/>
+      </marker>
+      <marker id="mk-read" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0.5 L8,4 L0,7.5 Z" class="tx-read"/>
+      </marker>
+    </defs>
+
+    <!-- lifelines -->
+    <line class="lifeline" x1="120" y1="74" x2="120" y2="1150"/>
+    <line class="lifeline" x1="380" y1="74" x2="380" y2="1150"/>
+    <line class="lifeline" x1="612" y1="74" x2="612" y2="1150"/>
+    <line class="lifeline" x1="838" y1="74" x2="838" y2="1150"/>
+
+    <!-- node boxes -->
+    <rect class="nodebox" x="26" y="16" width="188" height="52" rx="2"/>
+    <text class="nodetitle" x="120" y="39">FRONTEND</text>
+    <text class="nodesub" x="120" y="56">Next.js · Railway</text>
+
+    <rect class="nodebox" x="286" y="16" width="188" height="52" rx="2"/>
+    <text class="nodetitle" x="380" y="39">BACKEND</text>
+    <text class="nodesub" x="380" y="56">FastAPI + cron · Railway</text>
+
+    <rect class="nodebox" x="518" y="16" width="188" height="52" rx="2"/>
+    <text class="nodetitle" x="612" y="39">DATABASE</text>
+    <text class="nodesub" x="612" y="56">Postgres · private network</text>
+
+    <rect class="nodebox" x="744" y="16" width="188" height="52" rx="2"/>
+    <text class="nodetitle" x="838" y="39">PLAID API</text>
+    <text class="nodesub" x="838" y="56">gateway to your bank</text>
+
+    <!-- ============ CHAPTER 1 · LINK A BANK ============ -->
+    <text class="chap tx-link" x="26" y="102">LINK A BANK <tspan class="range">· once per bank</tspan></text>
+    <line class="chap-rule" x1="26" y1="110" x2="954" y2="110"/>
+
+    <!-- 1 -->
+    <line class="a st-link" x1="120" y1="148" x2="376" y2="148" marker-end="url(#mk-link)"/>
+    <circle class="badge-c st-link" cx="136" cy="148" r="9"/><text class="badge-t tx-link" x="136" y="151.5">1</text>
+    <text class="lbl halo tx-link" x="250" y="139">POST /link/token/create</text>
+    <text class="cap halo" x="250" y="164">signed in — the session JWT rides every call</text>
+
+    <!-- 2 -->
+    <line class="a st-link" x1="380" y1="196" x2="834" y2="196" marker-end="url(#mk-link)"/>
+    <circle class="badge-c st-link" cx="396" cy="196" r="9"/><text class="badge-t tx-link" x="396" y="199.5">2</text>
+    <text class="lbl halo tx-link" x="608" y="187">link_token create</text>
+    <text class="cap halo" x="608" y="212">Plaid mints a short-lived link_token for the browser</text>
+
+    <!-- 3 (double-headed: the Link session) -->
+    <line class="a st-link" x1="124" y1="244" x2="834" y2="244" marker-start="url(#mk-link)" marker-end="url(#mk-link)"/>
+    <circle class="badge-c st-link" cx="146" cy="244" r="9"/><text class="badge-t tx-link" x="146" y="247.5">3</text>
+    <text class="lbl halo tx-link" x="480" y="235">Plaid Link — sign in at your bank</text>
+    <text class="cap halo" x="480" y="260">the only browser ↔ Plaid contact · ends with a one-time public_token</text>
+
+    <!-- 4 -->
+    <line class="a st-link" x1="120" y1="292" x2="376" y2="292" marker-end="url(#mk-link)"/>
+    <circle class="badge-c st-link" cx="136" cy="292" r="9"/><text class="badge-t tx-link" x="136" y="295.5">4</text>
+    <text class="lbl halo tx-link" x="250" y="283">POST /item/public_token/exchange</text>
+    <text class="cap halo" x="250" y="308">the public_token is handed to the backend</text>
+
+    <!-- 5 -->
+    <line class="a st-link" x1="380" y1="340" x2="834" y2="340" marker-end="url(#mk-link)"/>
+    <circle class="badge-c st-link" cx="396" cy="340" r="9"/><text class="badge-t tx-link" x="396" y="343.5">5</text>
+    <text class="lbl halo tx-link" x="608" y="331">exchange → access_token</text>
+    <text class="cap halo" x="608" y="356">the durable bank credential — it never reaches the browser</text>
+
+    <!-- 6 -->
+    <line class="a st-link" x1="380" y1="388" x2="608" y2="388" marker-end="url(#mk-link)"/>
+    <circle class="badge-c st-link" cx="396" cy="388" r="9"/><text class="badge-t tx-link" x="396" y="391.5">6</text>
+    <text class="lbl halo tx-link" x="494" y="379">store item · reconcile accounts</text>
+    <text class="cap halo" x="494" y="404">token encrypted at rest; accounts keep their history across re-links</text>
+
+    <!-- ============ CHAPTER 2 · TRANSACTIONS ARRIVE ============ -->
+    <text class="chap tx-sync" x="26" y="446">TRANSACTIONS ARRIVE <tspan class="range">· continuous</tspan></text>
+    <line class="chap-rule" x1="26" y1="454" x2="954" y2="454"/>
+
+    <!-- 7 (bank stub) -->
+    <line class="a st-sync dashed" x1="838" y1="492" x2="962" y2="492" marker-end="url(#mk-sync)"/>
+    <circle class="badge-c st-sync" cx="854" cy="492" r="9"/><text class="badge-t tx-sync" x="854" y="495.5">7</text>
+    <text class="lbl halo tx-sync" x="906" y="483">checks your bank</text>
+    <text class="cap halo" x="898" y="508">on Plaid's own schedule</text>
+
+    <!-- 8 -->
+    <line class="a st-sync" x1="838" y1="540" x2="384" y2="540" marker-end="url(#mk-sync)"/>
+    <circle class="badge-c st-sync" cx="822" cy="540" r="9"/><text class="badge-t tx-sync" x="822" y="543.5">8</text>
+    <text class="lbl halo tx-sync" x="608" y="531">webhook: SYNC_UPDATES_AVAILABLE</text>
+    <text class="cap halo" x="608" y="556">signature verified (ES256) · answered 200 fast, work goes to the background</text>
+
+    <!-- 9 -->
+    <line class="a st-sync" x1="380" y1="588" x2="608" y2="588" marker-end="url(#mk-sync)"/>
+    <circle class="badge-c st-sync" cx="396" cy="588" r="9"/><text class="badge-t tx-sync" x="396" y="591.5">9</text>
+    <text class="lbl halo tx-sync" x="494" y="579">advisory lock on the item</text>
+    <text class="cap halo" x="494" y="604">webhook and cron can race — Postgres picks one winner</text>
+
+    <!-- 10 -->
+    <line class="a st-sync" x1="380" y1="636" x2="834" y2="636" marker-end="url(#mk-sync)"/>
+    <circle class="badge-c st-sync" cx="396" cy="636" r="9"/><text class="badge-t tx-sync" x="396" y="639.5">10</text>
+    <text class="lbl halo tx-sync" x="608" y="627">/transactions/sync — drain pages</text>
+    <text class="cap halo" x="608" y="652">added + modified + removed, resuming from the stored cursor</text>
+
+    <!-- 11 -->
+    <line class="a st-sync" x1="380" y1="684" x2="608" y2="684" marker-end="url(#mk-sync)"/>
+    <circle class="badge-c st-sync" cx="396" cy="684" r="9"/><text class="badge-t tx-sync" x="396" y="687.5">11</text>
+    <text class="lbl halo tx-sync" x="494" y="675">one transaction: upsert · tombstone · cursor last</text>
+    <text class="cap halo" x="494" y="700">the failure mode is reprocess, never skip</text>
+
+    <!-- cron note -->
+    <line class="chap-rule" x1="26" y1="726" x2="216" y2="726" stroke-dasharray="2 4"/>
+    <text class="note halo" x="490" y="730">every night the cron replays steps 9–11 for every bank — the idempotent backstop</text>
+    <line class="chap-rule" x1="764" y1="726" x2="954" y2="726" stroke-dasharray="2 4"/>
+
+    <!-- ============ CHAPTER 3 · REFRESH NOW ============ -->
+    <text class="chap tx-refresh" x="26" y="772">REFRESH NOW <tspan class="range">· on demand, when you doubt the data</tspan></text>
+    <line class="chap-rule" x1="26" y1="780" x2="954" y2="780"/>
+
+    <!-- 12 -->
+    <line class="a st-refresh" x1="120" y1="818" x2="376" y2="818" marker-end="url(#mk-refresh)"/>
+    <circle class="badge-c st-refresh" cx="136" cy="818" r="9"/><text class="badge-t tx-refresh" x="136" y="821.5">12</text>
+    <text class="lbl halo tx-refresh" x="250" y="809">POST /api/transactions/refresh</text>
+    <text class="cap halo" x="250" y="834">the Refresh button — toast, then a 5-minute grey-out</text>
+
+    <!-- 13 -->
+    <line class="a st-refresh" x1="380" y1="866" x2="608" y2="866" marker-end="url(#mk-refresh)"/>
+    <circle class="badge-c st-refresh" cx="396" cy="866" r="9"/><text class="badge-t tx-refresh" x="396" y="869.5">13</text>
+    <text class="lbl halo tx-refresh" x="494" y="857">claim the cooldown — one atomic UPDATE</text>
+    <text class="cap halo" x="494" y="882">before any Plaid call; concurrent clicks can't double-bill</text>
+
+    <!-- 14 -->
+    <line class="a st-refresh" x1="380" y1="914" x2="834" y2="914" marker-end="url(#mk-refresh)"/>
+    <circle class="badge-c st-refresh" cx="396" cy="914" r="9"/><text class="badge-t tx-refresh" x="396" y="917.5">14</text>
+    <text class="lbl halo tx-refresh" x="608" y="905">/transactions/refresh · per bank</text>
+    <text class="cap halo" x="608" y="930">billed per call → 202, fire-and-forget</text>
+
+    <!-- 15 (bank stub) -->
+    <line class="a st-refresh dashed" x1="838" y1="962" x2="962" y2="962" marker-end="url(#mk-refresh)"/>
+    <circle class="badge-c st-refresh" cx="854" cy="962" r="9"/><text class="badge-t tx-refresh" x="854" y="965.5">15</text>
+    <text class="lbl halo tx-refresh" x="906" y="953">re-polls your bank now</text>
+    <text class="cap halo" x="874" y="987">fresh data re-enters the story at step 8 ↑</text>
+
+    <!-- ============ CHAPTER 4 · READ THE LEDGER ============ -->
+    <text class="chap tx-read" x="26" y="1030">READ THE LEDGER <tspan class="range">· every page view</tspan></text>
+    <line class="chap-rule" x1="26" y1="1038" x2="954" y2="1038"/>
+
+    <!-- 16 -->
+    <line class="a st-read" x1="120" y1="1076" x2="376" y2="1076" marker-end="url(#mk-read)"/>
+    <circle class="badge-c st-read" cx="136" cy="1076" r="9"/><text class="badge-t tx-read" x="136" y="1079.5">16</text>
+    <text class="lbl halo tx-read" x="250" y="1067">GET /api/transactions · /api/sync-status</text>
+    <text class="cap halo" x="250" y="1092">every read behind require_auth, scoped to your user_id</text>
+
+    <!-- 17 -->
+    <line class="a st-read" x1="380" y1="1124" x2="608" y2="1124" marker-end="url(#mk-read)"/>
+    <circle class="badge-c st-read" cx="396" cy="1124" r="9"/><text class="badge-t tx-read" x="396" y="1127.5">17</text>
+    <text class="lbl halo tx-read" x="494" y="1115">read the user-scoped views</text>
+    <text class="cap halo" x="494" y="1140">v_transactions + items.last_synced_at</text>
+
+    <!-- return -->
+    <line class="a st-read dashed" x1="380" y1="1168" x2="124" y2="1168" marker-end="url(#mk-read)"/>
+    <text class="lbl halo tx-read" x="250" y="1159">rows + “Data as of 12 minutes ago”</text>
+    <text class="cap halo" x="250" y="1184">the story ends on the ledger</text>
+  </svg>
+  </div>
+
+  <div class="invariants">
+    <section>
+      <h2>No tokens in the browser</h2>
+      <p>The browser meets Plaid exactly once — inside Plaid Link (step 3). Every data call happens on the backend, using an <code>access_token</code> that is Fernet-encrypted at rest and never returned.</p>
+    </section>
+    <section>
+      <h2>Reprocess, never skip</h2>
+      <p>Added, modified and removed all land in one database transaction, and the sync cursor is written strictly last (step 11) — a crash anywhere replays cleanly instead of losing data.</p>
+    </section>
+    <section>
+      <h2>Safe to re-run</h2>
+      <p>A per-item advisory lock (step 9) arbitrates webhook vs. cron; the nightly cron re-syncs everything; the refresh cooldown is claimed atomically (step 13) so retries and second tabs can’t double-bill.</p>
+    </section>
+  </div>
+
+  <footer class="colophon">
+    <span>Personal Finance Analysis</span>
+    <span>Plaid Sandbox → Production · Railway · Postgres</span>
+  </footer>
+</div>
+</body>
+</html>

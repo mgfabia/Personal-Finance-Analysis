@@ -32,6 +32,19 @@ export function isAuthenticated(): boolean {
 // Thrown on a 401 so callers (and the app-shell guard) can bounce to /login.
 export class UnauthorizedError extends Error {}
 
+// Thrown on any other non-2xx: `message` is the human-readable line (already
+// extracted from the body), `detail` the raw parsed payload for callers that
+// need structured fields (e.g. a 429's retry_after).
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly detail: unknown = null,
+  ) {
+    super(message);
+  }
+}
+
 // --- core fetch -----------------------------------------------------------
 async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
@@ -46,14 +59,29 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new UnauthorizedError("session expired");
   }
   if (!res.ok) {
-    let detail = `request failed (${res.status})`;
+    let message = `request failed (${res.status})`;
+    let detail: unknown = null;
     try {
       const body = await res.json();
-      if (body?.detail) detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      if (body?.detail) {
+        detail = body.detail;
+        if (typeof body.detail === "string") {
+          message = body.detail;
+        } else {
+          // Keep the error_code visible — it's often the only actionable part
+          // of a Plaid failure (e.g. INVALID_API_KEYS).
+          const text = body.detail.error_message ?? body.detail.message;
+          message = text
+            ? body.detail.error_code
+              ? `${text} (${body.detail.error_code})`
+              : text
+            : JSON.stringify(body.detail);
+        }
+      }
     } catch {
       /* non-JSON error body — keep the generic message */
     }
-    throw new Error(detail);
+    throw new ApiError(message, res.status, detail);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -377,4 +405,27 @@ export function exchangePublicToken(publicToken: string) {
     "/item/public_token/exchange",
     { method: "POST", body: JSON.stringify({ public_token: publicToken }) },
   );
+}
+
+// --- sync freshness / on-demand refresh ------------------------------------
+export interface SyncStatusItem {
+  id: string;
+  institution_name: string | null;
+  status: "healthy" | "login_required" | "pending_expiration" | "revoked";
+  last_synced_at: string | null;
+  last_error: { error_code?: string | null; error_message?: string | null } | null;
+}
+
+export function getSyncStatus() {
+  return apiFetch<{
+    items: SyncStatusItem[];
+    refresh_cooldown_remaining: number; // seconds; > 0 while the cooldown is live
+  }>("/api/sync-status");
+}
+
+/** Fire-and-forget: asks Plaid to re-poll each bank (billed per call). The
+ * server answers a bare 202 and runs the Plaid calls in the background;
+ * results land later via webhook → sync. Callers re-read /api/sync-status. */
+export function refreshTransactions() {
+  return apiFetch<{ status: string }>("/api/transactions/refresh", { method: "POST" });
 }

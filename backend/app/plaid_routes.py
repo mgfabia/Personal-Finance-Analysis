@@ -15,9 +15,9 @@ transaction via db.connect().
 
 from __future__ import annotations
 
-import json
+import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 import plaid
@@ -32,13 +32,18 @@ from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.link_token_transactions import LinkTokenTransactions
 from plaid.model.products import Products
+from plaid.model.transactions_refresh_request import TransactionsRefreshRequest
 
 from .auth import require_auth
 from .config import get_settings
-from .crypto import encrypt_token
-from .db import connect
-from .plaid_client import get_plaid_client
+from .crypto import decrypt_token, encrypt_token
+from .db import connect, fetch_all
+from .plaid_client import get_plaid_client, plaid_error_detail
 from .reconcile import reconcile_accounts
+from .sync import LIVE_ITEM_PREDICATE
+from .users import refresh_cooldown_remaining
+
+logger = logging.getLogger("app.plaid")
 
 router = APIRouter(tags=["plaid"])
 
@@ -58,19 +63,13 @@ TXN_DAYS_REQUESTED = 730
 
 def _plaid_error(exc: plaid.ApiException) -> HTTPException:
     """Translate a Plaid ApiException into a 502 carrying Plaid's error fields."""
-    code = message = None
-    try:
-        body = json.loads(exc.body)
-        code = body.get("error_code")
-        message = body.get("error_message")
-    except (ValueError, TypeError, AttributeError):
-        pass
+    detail = plaid_error_detail(exc)
     return HTTPException(
         status_code=502,
         detail={
             "source": "plaid",
-            "error_code": code,
-            "error_message": message or "Plaid request failed",
+            "error_code": detail["error_code"],
+            "error_message": detail["error_message"] or "Plaid request failed",
         },
     )
 
@@ -205,3 +204,85 @@ def exchange_public_token(
         "accounts_matched": result["matched"],
         "accounts": result["accounts"],
     }
+
+
+def _request_refreshes(items: list[dict]) -> None:
+    """Background task: ask Plaid to re-poll each bank. Per-item failures are
+    logged and swallowed — the 202 already went out; results only ever arrive
+    via SYNC_UPDATES_AVAILABLE → the webhook sync path."""
+    client = get_plaid_client()
+    for item in items:
+        try:
+            client.transactions_refresh(
+                TransactionsRefreshRequest(
+                    access_token=decrypt_token(item["access_token_encrypted"])
+                )
+            )
+            logger.info("refresh.requested", extra={"item": item["plaid_item_id"]})
+        except plaid.ApiException as exc:
+            logger.error(
+                "refresh.item_failed",
+                extra={
+                    "item": item["plaid_item_id"],
+                    "error_code": plaid_error_detail(exc).get("error_code"),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "refresh.item_failed", extra={"item": item["plaid_item_id"]}
+            )
+
+
+@router.post("/api/transactions/refresh", status_code=202)
+def refresh_transactions(
+    background: BackgroundTasks,
+    user_id: str = Depends(require_auth),
+) -> dict:
+    """Ask Plaid to re-poll every linked bank for new transactions (billed per
+    call). Fire-and-forget: guards and the atomic cooldown claim run inline;
+    the Plaid calls run after the response as a background task, and results
+    arrive later via SYNC_UPDATES_AVAILABLE → the webhook sync path. The
+    per-user cooldown, claimed atomically BEFORE any Plaid I/O, caps cost —
+    concurrent requests can't double-bill. Clients re-read /api/sync-status
+    for the cooldown and per-bank freshness."""
+    cooldown = get_settings().refresh_cooldown_seconds
+
+    # Guards first, so a request that can't do anything doesn't burn a window.
+    items = fetch_all(
+        "SELECT plaid_item_id, status, access_token_encrypted FROM items "
+        f"WHERE user_id = %s AND {LIVE_ITEM_PREDICATE}",
+        (user_id,),
+    )
+    if not items:
+        raise HTTPException(404, "no linked banks to refresh")
+    # Refreshing a dead login is a guaranteed per-call charge that fails.
+    eligible = [i for i in items if i["status"] not in ("login_required", "revoked")]
+    if not eligible:
+        raise HTTPException(409, "all linked banks need to be reconnected first")
+
+    # Atomic claim: the guarded UPDATE either wins the window or nobody does —
+    # two concurrent requests can both pass the guards above, but only one gets
+    # a row back here. Accepted tradeoff: a fully-failed background run still
+    # burns one window. The 429 is raised OUTSIDE the connect() block because
+    # the remaining-helper opens its own connection.
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET last_manual_refresh_at = now() "
+                "WHERE id = %s AND (last_manual_refresh_at IS NULL "
+                "  OR last_manual_refresh_at < now() - make_interval(secs => %s)) "
+                "RETURNING id",
+                (user_id, cooldown),
+            )
+            claimed = cur.fetchone() is not None
+    if not claimed:
+        raise HTTPException(
+            429,
+            detail={
+                "message": "Refreshed recently — try again shortly.",
+                "retry_after": max(1, refresh_cooldown_remaining(user_id)),
+            },
+        )
+
+    background.add_task(_request_refreshes, eligible)
+    return {"status": "accepted"}

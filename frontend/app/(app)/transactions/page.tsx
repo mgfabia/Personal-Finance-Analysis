@@ -6,8 +6,9 @@
 // tags). Class chips carry the row's txn_class with its source mark; paired
 // legs show their counterpart account.
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { RiRefreshLine } from "@remixicon/react";
 
 import { useShell } from "../../components/AppShell";
 import { TxnEditor } from "../../components/TxnEditor";
@@ -16,19 +17,24 @@ import { Card } from "../../components/ui/Card";
 import { ClassChip } from "../../components/ui/ClassChip";
 import { Select } from "../../components/ui/Select";
 import { TagChip } from "../../components/ui/TagChip";
+import { Toast } from "../../components/ui/Toast";
 import {
+  ApiError,
   getAccounts,
   getCategorySummary,
+  getSyncStatus,
   getTags,
   getTransactions,
+  refreshTransactions,
   UnauthorizedError,
   type Account,
+  type SyncStatusItem,
   type Tag,
   type Transaction,
   type TxnClass,
 } from "../../lib/api";
 import { TXN_CLASS, TXN_CLASS_ORDER } from "../../lib/classes";
-import { formatDateShort, formatSignedAmount, isInflow } from "../../lib/format";
+import { formatDateShort, formatSignedAmount, formatTimeAgo, isInflow } from "../../lib/format";
 import { cx, eyebrow, focusRing, inputBase } from "../../lib/utils";
 
 const PAGE_SIZE = 100;
@@ -83,6 +89,51 @@ function TransactionsInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+
+  // On-demand refresh: busy state, a transient toast, the per-bank freshness
+  // read, and the server-owned cooldown mirrored as a local deadline. The one
+  // write path is hydrateSyncStatus — the server sends *remaining seconds*, so
+  // there's no client/server clock math and no localStorage.
+  const [refreshing, setRefreshing] = useState(false);
+  const [blip, setBlip] = useState<{ msg: string; tone: "info" | "error" }>({ msg: "", tone: "info" });
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [syncItems, setSyncItems] = useState<SyncStatusItem[]>([]);
+
+  // Auto-clear the cooldown when the window elapses so the button re-enables
+  // without a manual re-render.
+  useEffect(() => {
+    if (cooldownUntil <= Date.now()) return;
+    const id = window.setTimeout(() => setCooldownUntil(0), cooldownUntil - Date.now());
+    return () => window.clearTimeout(id);
+  }, [cooldownUntil]);
+
+  // Transient toast; clearing the previous timer stops a stale one from wiping
+  // a newer message early.
+  const toastTimer = useRef(0);
+  const showBlip = useCallback((msg: string, tone: "info" | "error") => {
+    window.clearTimeout(toastTimer.current);
+    setBlip({ msg, tone });
+    toastTimer.current = window.setTimeout(() => setBlip({ msg: "", tone: "info" }), 5000);
+  }, []);
+
+  // The single cooldown/freshness write path: mount, after POST, after a 429.
+  const hydrateSyncStatus = useCallback(async () => {
+    try {
+      const s = await getSyncStatus();
+      setSyncItems(s.items);
+      setCooldownUntil(
+        s.refresh_cooldown_remaining > 0 ? Date.now() + s.refresh_cooldown_remaining * 1000 : 0,
+      );
+    } catch (e) {
+      if (e instanceof UnauthorizedError) router.replace("/login");
+      // Otherwise non-fatal: the freshness UI stays empty; filters and the
+      // table load regardless.
+    }
+  }, [router]);
+
+  useEffect(() => {
+    void hydrateSyncStatus();
+  }, [hydrateSyncStatus, linkVersion]);
 
   // Reference data (accounts, tag registry, known categories) — once per link.
   useEffect(() => {
@@ -150,20 +201,83 @@ function TransactionsInner() {
     refreshReview(); // an override can clear rows from the review queue
   }, [load, refreshReview]);
 
+  // Oldest last-synced timestamp across the linked banks — the honest "data as
+  // of" figure (null while any bank has never synced, or before the read lands).
+  const dataAsOf = useMemo(() => {
+    if (syncItems.length === 0) return null;
+    const ts = syncItems.map((i) => i.last_synced_at);
+    if (ts.some((t) => t === null)) return null;
+    return ts.reduce((a, b) => (a! < b! ? a : b));
+  }, [syncItems]);
+
+  // Banks whose login died — surfaced persistently (not as a toast) until the
+  // Phase 6 re-auth flow gives them a real reconnect path.
+  const needsReconnect = useMemo(
+    () => syncItems.filter((i) => i.status === "login_required" || i.status === "revoked"),
+    [syncItems],
+  );
+
+  // Fire-and-forget: ask Plaid to re-poll every bank (billed per call, so the
+  // server enforces a cooldown). The server answers 202 before any Plaid I/O;
+  // results land later through the normal pipeline (SYNC_UPDATES_AVAILABLE
+  // webhook → run_sync; nightly cron as backstop). The cooldown state comes
+  // from re-reading /api/sync-status — success and 429 alike.
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshTransactions();
+      showBlip("Refresh requested — new transactions usually appear within a few minutes.", "info");
+      void hydrateSyncStatus();
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        router.replace("/login");
+        return;
+      }
+      if (e instanceof ApiError && e.status === 429) {
+        // Another device/tab holds the window — adopt the server's view of it.
+        showBlip(e.message, "info");
+        void hydrateSyncStatus();
+      } else {
+        showBlip(e instanceof Error ? e.message : "Refresh failed.", "error");
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-baseline justify-between gap-3">
         <h1 className="font-mono text-base font-semibold uppercase tracking-[0.14em] text-ink">
           Transactions
         </h1>
-        {activeFilterCount > 0 && (
-          <button
-            onClick={() => patchFilters(EMPTY_FILTERS)}
-            className={cx("font-mono text-[10px] uppercase tracking-wide text-ink-2 underline hover:text-ink", ...focusRing)}
+        <div className="flex items-center gap-3">
+          {activeFilterCount > 0 && (
+            <button
+              onClick={() => patchFilters(EMPTY_FILTERS)}
+              className={cx("font-mono text-[10px] uppercase tracking-wide text-ink-2 underline hover:text-ink", ...focusRing)}
+            >
+              Clear {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
+            </button>
+          )}
+          {needsReconnect.length > 0 && (
+            <span className={cx(eyebrow, "text-neg")}>
+              {needsReconnect.map((i) => i.institution_name ?? "a bank").join(", ")}{" "}
+              need{needsReconnect.length === 1 ? "s" : ""} reconnecting
+            </span>
+          )}
+          {dataAsOf && <span className={eyebrow}>Data as of {formatTimeAgo(dataAsOf)}</span>}
+          <Button
+            size="sm"
+            variant="secondary"
+            isLoading={refreshing}
+            disabled={refreshing || Date.now() < cooldownUntil}
+            onClick={() => void handleRefresh()}
           >
-            Clear {activeFilterCount} filter{activeFilterCount === 1 ? "" : "s"}
-          </button>
-        )}
+            {!refreshing && <RiRefreshLine className="size-4" aria-hidden="true" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Class filter — the taxonomy as a chip row */}
@@ -451,6 +565,8 @@ function TransactionsInner() {
           </div>
         )}
       </Card>
+
+      <Toast message={blip.msg} tone={blip.tone} />
     </div>
   );
 }

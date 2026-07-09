@@ -21,6 +21,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .auth import require_auth
 from .db import fetch_all
+from .sync import LIVE_ITEM_PREDICATE
+from .users import refresh_cooldown_remaining
 
 router = APIRouter(prefix="/api", tags=["read"])
 
@@ -51,6 +53,25 @@ def list_accounts(user_id: str = Depends(require_auth)) -> dict:
         (user_id,),
     )
     return {"accounts": rows}
+
+
+@router.get("/sync-status")
+def sync_status(user_id: str = Depends(require_auth)) -> dict:
+    """Per-bank freshness (last_synced_at is written by every successful sync)
+    plus the manual-refresh cooldown, server-computed as *remaining seconds* so
+    the client never does clock math against server timestamps. Drives the
+    transactions page's "Data as of" line, the needs-reconnecting notice, and
+    the Refresh button's grey-out."""
+    items = fetch_all(
+        "SELECT id, institution_name, status, last_synced_at, last_error "
+        f"FROM items WHERE user_id = %s AND {LIVE_ITEM_PREDICATE} "
+        "ORDER BY institution_name NULLS LAST",
+        (user_id,),
+    )
+    return {
+        "items": items,
+        "refresh_cooldown_remaining": refresh_cooldown_remaining(user_id),
+    }
 
 
 @router.get("/transactions")

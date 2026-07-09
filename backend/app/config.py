@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
+    # Cooldown (seconds) between manual /transactions/refresh calls. The refresh
+    # add-on is billed per call, so this caps cost; returned to the client in the
+    # refresh response so both sides enforce the same window.
+    refresh_cooldown_seconds: int = Field(
+        default=300, validation_alias="REFRESH_COOLDOWN_SECONDS"
+    )
     # The single app user's email. Until hand-rolled auth lands (Phase 7), this
     # identifies the one `users` row that all data attaches to; Phase 7's login
     # checks a password against that same row. Override per environment.
