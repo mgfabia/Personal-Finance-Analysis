@@ -14,6 +14,11 @@ Verification (all must pass, else reject):
   5. ``iat`` is within 5 minutes — replay protection.
 
 Verification keys are cached by ``kid`` (stable per key; cheap to keep).
+
+``verify_webhook`` returns ``None`` on success or a short reason slug on
+failure (``stale_iat``, ``bad_signature``, ``key_unavailable``, …) so the
+handler can log *which* gate rejected — a persistent real failure reads
+differently from a benign stale-retry after a deploy.
 """
 
 from __future__ import annotations
@@ -79,46 +84,51 @@ def _verification_key(kid: str) -> dict[str, Any] | None:
     return jwk
 
 
-def verify_webhook(raw_body: bytes, verification_header: str | None) -> bool:
-    """Return True only if the webhook is authentic and covers this body."""
+def verify_webhook(raw_body: bytes, verification_header: str | None) -> str | None:
+    """Verify a webhook. Return ``None`` when authentic and covering this body,
+    else a short reason slug naming the gate that rejected it — logged by the
+    caller so a persistent failure (wrong key, clock skew, mangled body) is
+    diagnosable and distinguishable from a benign stale-retry (``stale_iat``)."""
     if not verification_header:
-        return False
+        return "missing_header"
 
     # 1. Read the unverified header to learn alg + kid; pin alg to ES256.
     try:
         header = jwt.get_unverified_header(verification_header)
     except jwt.PyJWTError:
-        return False
+        return "malformed_header"
     if header.get("alg") != "ES256" or not header.get("kid"):
-        return False
+        return "bad_alg_or_kid"
 
     # 2/3. Fetch the key for this kid; reject if unknown, rotated, or expired.
     jwk = _verification_key(header["kid"])
-    if jwk is None or jwk.get("expired_at") is not None:
-        return False
+    if jwk is None:
+        return "key_unavailable"
+    if jwk.get("expired_at") is not None:
+        return "key_expired"
 
     try:
         public_key = ECAlgorithm.from_jwk(
             json.dumps({k: jwk[k] for k in ("kty", "crv", "x", "y")})
         )
     except (KeyError, ValueError, jwt.PyJWTError):
-        return False
+        return "bad_key"
 
     # Verify the signature — algorithms pinned to ES256 (alg-confusion defense).
     try:
         claims = jwt.decode(verification_header, key=public_key, algorithms=["ES256"])
     except jwt.PyJWTError:
-        return False
+        return "bad_signature"
 
-    # 5. Freshness (replay protection).
+    # 5. Freshness (replay protection). Stale retries land here — benign.
     iat = claims.get("iat")
     if not isinstance(iat, (int, float)) or (time.time() - iat) > _MAX_AGE_SECONDS:
-        return False
+        return "stale_iat"
 
     # 4. Body integrity — the signed claim must match this exact body.
     expected = claims.get("request_body_sha256")
     actual = hashlib.sha256(raw_body).hexdigest()
     if not expected or not hmac.compare_digest(str(expected), actual):
-        return False
+        return "body_mismatch"
 
-    return True
+    return None

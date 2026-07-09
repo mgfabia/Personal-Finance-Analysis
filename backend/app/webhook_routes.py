@@ -107,8 +107,15 @@ def handle_webhook(payload: dict, background: BackgroundTasks) -> None:
 @router.post("/webhooks/plaid")
 async def plaid_webhook(request: Request, background: BackgroundTasks) -> dict:
     raw = await request.body()
-    if not verify_webhook(raw, request.headers.get("plaid-verification")):
-        logger.warning("webhook.verify_failed", extra={"client": request.client.host if request.client else None})
+    reason = verify_webhook(raw, request.headers.get("plaid-verification"))
+    if reason is not None:
+        logger.warning(
+            "webhook.verify_failed",
+            extra={
+                "reason": reason,
+                "client": request.client.host if request.client else None,
+            },
+        )
         raise HTTPException(status_code=401, detail="webhook verification failed")
     try:
         payload = json.loads(raw or b"{}")
