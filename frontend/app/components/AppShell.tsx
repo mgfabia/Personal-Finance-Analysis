@@ -11,7 +11,8 @@ import {
   RiListUnordered,
   RiLogoutBoxRLine,
   RiPriceTag3Line,
-  RiBankLine
+  RiBankLine,
+  RiRepeatLine,
 } from "@remixicon/react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -52,6 +53,7 @@ const NAV = [
   { href: "/accounts", label: "Accounts", icon: RiBankLine },
   { href: "/transactions", label: "Transactions", icon: RiListUnordered },
   { href: "/transfers", label: "Transfers", icon: RiArrowLeftRightLine },
+  { href: "/obligations", label: "Obligations", icon: RiRepeatLine },
   { href: "/review", label: "Review", icon: RiInboxLine },
   { href: "/tags", label: "Tags", icon: RiPriceTag3Line },
 ] as const;

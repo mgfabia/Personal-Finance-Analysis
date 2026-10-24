@@ -20,6 +20,7 @@ from .auth_routes import router as auth_router
 from .config import get_settings
 from .db import ping
 from .logging_setup import configure_logging
+from .obligation_routes import router as obligation_router
 from .plaid_routes import router as plaid_router
 from .read_routes import router as read_router
 from .webhook_routes import router as webhook_router
@@ -105,6 +106,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(read_router)
 app.include_router(write_router)
+app.include_router(obligation_router)
 app.include_router(plaid_router)
 app.include_router(webhook_router)
 

@@ -117,11 +117,13 @@ export type TxnClass =
 /** The 7 classes a user may rule; the two quarantine classes are never rulings. */
 export type RulableTxnClass = Exclude<TxnClass, "p2p_unclassified" | "transfer_unmatched">;
 
-export type TxnClassSource = "override" | "match" | "rule";
+export type TxnClassSource = "override" | "obligation" | "match" | "rule";
 export type PfcConfidence = "VERY_HIGH" | "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN";
 export type ReviewReason = "p2p" | "unmatched_transfer" | "low_confidence";
 export type TransferKind = "card_payment" | "to_investment" | "account_transfer";
 export type TransferSource = "auto" | "user";
+export type ObligationRole = "payment" | "reimbursement";
+export type ObligationStatus = "complete" | "upcoming" | "partial" | "missing";
 
 // --- types (mirror the read API / 0004 views) ------------------------------
 export interface Transaction {
@@ -142,7 +144,7 @@ export interface Transaction {
   pfc_primary: string | null;
   pfc_detailed: string | null;
   pfc_confidence: PfcConfidence | null;
-  category: string | null; // effective: category_override > pfc_primary
+  category: string | null; // effective: category_override > obligation > pfc_primary
   is_hidden: boolean;
   notes: string | null;
   tag_ids: string[];
@@ -153,6 +155,11 @@ export interface Transaction {
   counterpart_account_name: string | null;
   txn_class: TxnClass;
   txn_class_source: TxnClassSource;
+  // Recurring obligation (0007) this row belongs to, if any.
+  obligation_id: string | null;
+  obligation_name: string | null;
+  obligation_role: ObligationRole | null;
+  obligation_period: string | null; // first of the obligation month it counts in
 }
 
 export interface MonthlySummary {
@@ -304,6 +311,85 @@ export function getSavingsRate() {
 
 export function getTags() {
   return apiFetch<{ tags: Tag[] }>("/api/tags");
+}
+
+// --- recurring obligations (0007) ---------------------------------------------
+/** The editable fields. Money is sent as numbers, read back as strings. */
+export interface ObligationInput {
+  name: string;
+  category: string;
+  account_id: string | null;
+  match_text: string | null;
+  amount: number;
+  amount_tolerance: number;
+  day_of_month: number;
+  day_window: number;
+  reimbursement_amount: number | null;
+  reimbursement_count: number;
+  reimbursement_tolerance: number;
+  start_month: string | null; // YYYY-MM-01
+  end_month: string | null;
+  active: boolean;
+}
+
+export interface ObligationLeg {
+  transaction_id: string;
+  date: string;
+  amount: string;
+}
+
+export interface ObligationPeriod {
+  period: string; // first of month
+  expected_date: string;
+  status: ObligationStatus;
+  payment: ObligationLeg | null;
+  reimbursements: (ObligationLeg & { shares: number })[];
+  shares_received: number;
+  reimbursed: string;
+  net: string;
+}
+
+export interface Obligation {
+  id: string;
+  name: string;
+  category: string;
+  account_id: string | null;
+  account_name: string | null;
+  account_mask: string | null;
+  match_text: string | null;
+  amount: string;
+  amount_tolerance: string;
+  day_of_month: number;
+  day_window: number;
+  reimbursement_amount: string | null;
+  reimbursement_count: number;
+  reimbursement_tolerance: string;
+  start_month: string | null;
+  end_month: string | null;
+  active: boolean;
+  periods: ObligationPeriod[]; // newest first
+}
+
+export function getObligations() {
+  return apiFetch<{ obligations: Obligation[] }>("/api/obligations");
+}
+
+export function createObligation(body: ObligationInput) {
+  return apiFetch<{ id: string }>("/api/obligations", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateObligation(id: string, patch: Partial<ObligationInput>) {
+  return apiFetch<{ id: string }>(`/api/obligations/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function deleteObligation(id: string) {
+  return apiFetch<{ deleted: string }>(`/api/obligations/${id}`, { method: "DELETE" });
 }
 
 // --- write endpoints ---------------------------------------------------------
