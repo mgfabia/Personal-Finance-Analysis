@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from .auth import require_auth
 from .db import connect
-from .derive import rebuild_transfer_matches
+from .derive import rebuild_matches
 
 logger = logging.getLogger("app.write")
 
@@ -91,7 +91,7 @@ def put_override(
         # A class ruling changes matcher inputs (overridden legs are vetoed):
         # re-derive inside the same request so the read-back is consistent.
         if "txn_class_override" in provided:
-            rebuild_transfer_matches(conn)
+            rebuild_matches(conn)
     return {"transaction_id": str(txn_id), "updated": sorted(provided)}
 
 
@@ -278,7 +278,7 @@ def create_transfer(
             )
             match_id = cur.fetchone()[0]
         # Displaced auto legs may re-pair elsewhere.
-        rebuild_transfer_matches(conn)
+        rebuild_matches(conn)
     return {"id": str(match_id), "source": "user"}
 
 
@@ -310,5 +310,5 @@ def delete_transfer(
                     (user_id, row[0], row[1], row[0], row[1]),
                 )
         # Freed legs may pair elsewhere (or re-pair, if not rejected).
-        rebuild_transfer_matches(conn)
+        rebuild_matches(conn)
     return {"deleted": str(match_id), "rejected": reject}

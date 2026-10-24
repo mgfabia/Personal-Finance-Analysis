@@ -16,7 +16,7 @@ import {
   type Transaction,
 } from "../lib/api";
 import { RULABLE_CLASSES, TXN_CLASS } from "../lib/classes";
-import { formatDate, formatSignedAmount } from "../lib/format";
+import { formatDate, formatMonth, formatSignedAmount } from "../lib/format";
 import { cx, eyebrow, inputBase } from "../lib/utils";
 import { Button } from "./ui/Button";
 import { Select } from "./ui/Select";
@@ -118,6 +118,7 @@ export function TxnEditor({
                 <option value={AUTO}>
                   Auto — {TXN_CLASS[txn.txn_class].label}
                   {txn.txn_class_source === "match" ? " (paired)" : ""}
+                  {txn.txn_class_source === "obligation" ? ` (${txn.obligation_name})` : ""}
                 </option>
                 {RULABLE_CLASSES.map((c) => (
                   <option key={c} value={c}>
@@ -201,6 +202,12 @@ export function TxnEditor({
               "Counterpart",
               txn.counterpart_account_name
                 ? `${txn.counterpart_account_name}${txn.transfer_corroborated ? " · corroborated" : ""}`
+                : "—",
+            ],
+            [
+              "Obligation",
+              txn.obligation_name && txn.obligation_period
+                ? `${txn.obligation_name} · ${txn.obligation_role} · ${formatMonth(txn.obligation_period)}`
                 : "—",
             ],
             ["Class source", txn.txn_class_source],

@@ -7,16 +7,19 @@ import { TXN_CLASS } from "../../lib/classes";
 import type { TxnClass, TxnClassSource } from "../../lib/api";
 import { cx } from "../../lib/utils";
 
-// txn_class_source, shown subtly after the label: user override (✱) and
-// pair-derived (⇄) matter during an audit; plain rule needs no mark.
+// txn_class_source, shown subtly after the label: user override (✱),
+// obligation-grouped (↻) and pair-derived (⇄) matter during an audit; plain
+// rule needs no mark.
 const SOURCE_MARK: Record<TxnClassSource, string | null> = {
   override: "✱",
+  obligation: "↻",
   match: "⇄",
   rule: null,
 };
 
 const SOURCE_TITLE: Record<TxnClassSource, string> = {
   override: "class set by you",
+  obligation: "class from a recurring obligation",
   match: "class from a matched transfer pair",
   rule: "class from rules",
 };
